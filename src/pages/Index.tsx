@@ -182,10 +182,10 @@ const Index = () => {
           <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl glow-text mb-3">
             AI Companion Hub
           </h1>
-          <span className="sr-only">NSFW AI Chatbot Directory</span>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Discover {chatbots.length}+ AI companion platforms — from local privacy-first
-            tools to web-based companions. Curated, categorized, and uncensored.
+            Discover {chatbots.length} AI companion platforms — from local privacy-first
+            tools to web-based companions. Filter by category, features, and content
+            level. We catalog platforms; we do not run the models.
           </p>
         </div>
       </header>

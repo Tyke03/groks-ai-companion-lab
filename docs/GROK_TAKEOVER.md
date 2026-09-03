@@ -250,4 +250,15 @@ README omits `test:e2e` and `test:watch`; this file is the accurate list.
 
 ### 2026-09-03 — First batch
 
-_To be appended after the batch lands._
+Landed on `grok/takeover-audit-and-first-batch` after the audit commit:
+
+- Hub branding on directory, blog titles, docs hub, community subtitle, README H1; dropped the leftover sr-only product name.
+- Homepage hero no longer claims the whole catalog is uncensored; states we catalog platforms and do not run models.
+- Documentation hub uses the real guide count; removed hardcoded sr-only (16).
+- CrushOn.AI `docsAvailable` set false until a guide exists.
+- 404 uses Layout + client Link; no production console.error; age gate applies.
+- Age-gate Leave stays on-site instead of redirecting to Google.
+- Favicon points at `/favicon.ico`; package name is `ai-companion-hub`.
+- Doc Consolidator Fetch works when the LLM backend is down; banner copy matches.
+- Added public-env example with public variable names only.
+- Tests: Hub heading, dynamic guide count, 404 chrome; new `src/test/data-integrity.test.ts`.

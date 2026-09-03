@@ -142,7 +142,7 @@ export const chatbots: Chatbot[] = [
     name: "CrushOn.AI", slug: "crushon-ai", type: "Web platform", nsfwPolicy: "Uncensored", contentLevel: 5,
     hasExplicitChat: true,
     description: "Unfiltered AI chat with community-driven characters and API access.",
-    category: "hosted", url: "https://crushon.ai", docsAvailable: true,
+    category: "hosted", url: "https://crushon.ai", docsAvailable: false,
     model: "Proprietary + community models", pricing: "Free tier + paid", contextWindow: "~8K",
     apiAccess: "open", memory: "Basic", knownIssues: "Free-tier queues",
     cardFormat: "Platform-native + import", lastVerified: "2026-08",

@@ -56,7 +56,7 @@ afterEach(() => {
 describe("Directory page", () => {
   it("renders the new taxonomy, content levels, and added platforms", () => {
     renderPage(<Index />);
-    expect(screen.getByText("NSFW AI Chatbot Directory")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI Companion Hub" })).toBeInTheDocument();
     // New six-category taxonomy — category single-select controls
     expect(screen.getByRole("radio", { name: /Local Frontends/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Hosted RP Platforms/ })).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("Documentation", () => {
   it("renders the hub and platform guide with TOC + quick facts", () => {
     renderPage(<Documentation />);
     expect(screen.getByText("Documentation Hub")).toBeInTheDocument();
-    expect(screen.getByText("Platforms with Full Guides (16)")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Platforms with Full Guides \(\d+\)/ })).toBeInTheDocument();
   });
 
   it("renders a platform doc with in-page TOC, quick facts, and reviewed date", () => {
@@ -189,8 +189,10 @@ describe("Tools", () => {
 });
 
 describe("NotFound", () => {
-  it("renders a 404", () => {
+  it("renders a 404 inside site chrome", () => {
     renderPage(<NotFound />, "/does-not-exist");
     expect(screen.getByText("404")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Return to the directory/i })).toBeInTheDocument();
+    expect(screen.getByText("AI Companion Hub")).toBeInTheDocument();
   });
 });

@@ -159,7 +159,7 @@ export const DocConsolidator = () => {
           <div className="text-sm">
             <p className="font-medium text-amber-300">AI backend unavailable</p>
             <p className="text-muted-foreground">
-              URL fetching and consolidation require the AI backend. You can still copy, download, and save previously generated results.
+              AI consolidation requires the AI backend; URL fetch does not. You can still copy, download, and save previously generated results.
             </p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
@@ -211,7 +211,7 @@ export const DocConsolidator = () => {
                 className="pl-10 bg-secondary border-border"
               />
             </div>
-            <Button onClick={handleFetchUrl} disabled={fetching || aiUnavailable} variant="outline">
+            <Button onClick={handleFetchUrl} disabled={fetching} variant="outline">
               {fetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
               {fetching ? "Fetching..." : "Fetch"}
             </Button>

@@ -1,0 +1,8 @@
+{
+  "name": "QA V1 Card",
+  "description": "Synthetic QA fixture for E2E tests.",
+  "personality": "Methodical, precise.",
+  "scenario": "Testing a local card workflow.",
+  "first_mes": "Hello from a V1 test card.",
+  "mes_example": "<START>\n{{char}}: Example V1 dialogue line.\n{{user}}: I see.\n{{char}}: Yes, this is a test."
+}

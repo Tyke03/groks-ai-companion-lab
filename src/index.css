@@ -1,0 +1,119 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 230 20% 5%;
+    --foreground: 214 32% 91%;
+
+    --card: 230 18% 8%;
+    --card-foreground: 214 32% 91%;
+
+    --popover: 230 18% 8%;
+    --popover-foreground: 214 32% 91%;
+
+    --primary: 174 72% 56%;
+    --primary-foreground: 230 20% 5%;
+
+    --secondary: 230 16% 14%;
+    --secondary-foreground: 214 32% 91%;
+
+    --muted: 230 14% 12%;
+    --muted-foreground: 215 16% 62%;
+
+    --accent: 174 72% 56%;
+    --accent-foreground: 230 20% 5%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 230 14% 16%;
+    --input: 230 14% 16%;
+    --ring: 174 72% 56%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 230 18% 6%;
+    --sidebar-foreground: 214 32% 91%;
+    --sidebar-primary: 174 72% 56%;
+    --sidebar-primary-foreground: 230 20% 5%;
+    --sidebar-accent: 230 14% 12%;
+    --sidebar-accent-foreground: 214 32% 91%;
+    --sidebar-border: 230 14% 16%;
+    --sidebar-ring: 174 72% 56%;
+
+    /* Custom tokens */
+    --glow-primary: 174 72% 56%;
+    --surface-hover: 230 16% 12%;
+    --badge-local: 174 72% 56%;
+    --badge-hosted: 210 80% 60%;
+    --badge-libraries: 45 93% 58%;
+    --badge-companion: 340 70% 62%;
+    --badge-providers: 142 71% 45%;
+    --badge-hybrid: 280 65% 72%;
+  }
+
+  .dark {
+    --background: 230 20% 5%;
+    --foreground: 214 32% 91%;
+    --card: 230 18% 8%;
+    --card-foreground: 214 32% 91%;
+    --popover: 230 18% 8%;
+    --popover-foreground: 214 32% 91%;
+    --primary: 174 72% 56%;
+    --primary-foreground: 230 20% 5%;
+    --secondary: 230 16% 14%;
+    --secondary-foreground: 214 32% 91%;
+    --muted: 230 14% 12%;
+    --muted-foreground: 215 16% 62%;
+    --accent: 174 72% 56%;
+    --accent-foreground: 230 20% 5%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 230 14% 16%;
+    --input: 230 14% 16%;
+    --ring: 174 72% 56%;
+    --sidebar-background: 230 18% 6%;
+    --sidebar-foreground: 214 32% 91%;
+    --sidebar-primary: 174 72% 56%;
+    --sidebar-primary-foreground: 230 20% 5%;
+    --sidebar-accent: 230 14% 12%;
+    --sidebar-accent-foreground: 214 32% 91%;
+    --sidebar-border: 230 14% 16%;
+    --sidebar-ring: 174 72% 56%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+}
+
+@layer utilities {
+  .glow-text {
+    text-shadow: 0 0 20px hsl(174 72% 56% / 0.4), 0 0 40px hsl(174 72% 56% / 0.2);
+  }
+
+  .card-glow {
+    box-shadow: 0 0 0 1px hsl(230 14% 16%), 0 4px 24px -4px hsl(0 0% 0% / 0.5);
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
+  }
+
+  .card-glow:hover {
+    box-shadow: 0 0 0 1px hsl(174 72% 56% / 0.3), 0 8px 32px -4px hsl(174 72% 56% / 0.15);
+    transform: translateY(-2px);
+  }
+}

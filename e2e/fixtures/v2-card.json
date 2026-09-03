@@ -1,0 +1,31 @@
+{
+  "spec": "chara_card_v2",
+  "spec_version": "2.0",
+  "data": {
+    "name": "QA V2 Card",
+    "description": "Synthetic V2 test card for E2E.",
+    "personality": "Careful, analytical.",
+    "scenario": "Local browser QA workflow.",
+    "first_mes": "V2 hello from E2E.",
+    "mes_example": "<START>\n{{char}}: V2 dialogue example.\n{{user}}: Testing?\n{{char}}: Affirmative.",
+    "creator_notes": "Synthetic E2E fixture only.",
+    "system_prompt": "",
+    "post_history_instructions": "",
+    "alternate_greetings": [],
+    "tags": ["qa", "synthetic"],
+    "creator": "E2E QA",
+    "character_version": "1.0",
+    "extensions": {
+      "qa_extension": {
+        "keep": true,
+        "data": "preserved"
+      }
+    },
+    "character_book": {
+      "name": "QA Book",
+      "description": "Synthetic test lorebook",
+      "entries": []
+    },
+    "qa_unknown_field": "preserve me across round trips"
+  }
+}

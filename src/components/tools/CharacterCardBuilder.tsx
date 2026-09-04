@@ -173,7 +173,6 @@ export const CharacterCardBuilder = () => {
   const [importedFormat, setImportedFormat] = useState<CardFormat | null>(null);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [specVersion, setSpecVersion] = useState<SpecVersion>("v2");
-  const [generationMode, setGenerationMode] = useState<"default" | "byok">("default");
   const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const [previewMode, setPreviewMode] = useState<"json" | "chat">("json");
   const [copied, setCopied] = useState(false);
@@ -356,7 +355,8 @@ export const CharacterCardBuilder = () => {
     }
     setGeneratingAll(true);
     try {
-      const { data, error } = await supabase.functions.invoke("venice-ai", {          body: { action: "generate-all", existingFields: card, generationMode },
+      const { data, error } = await supabase.functions.invoke("venice-ai", {
+        body: { action: "generate-all", existingFields: card, generationMode: "default" },
       });
       if (error) throw error;
       if (data?.result && typeof data.result === "object" && !data.parseError) {
@@ -617,7 +617,20 @@ export const CharacterCardBuilder = () => {
         </AlertDialog>
       </div>
 
-      {showGenerationSettings && <div className="rounded-lg border border-primary/20 bg-primary/5 p-4"><div className="flex items-center gap-2"><Settings2 className="h-4 w-4 text-primary" /><p className="text-sm font-medium text-foreground">AI generation settings</p></div><div className="mt-3 flex flex-wrap gap-2"><button onClick={() => setGenerationMode("default")} className={`rounded-md border px-3 py-1.5 text-xs ${generationMode === "default" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground"}`}>Default Free API</button><button onClick={() => setGenerationMode("byok")} className={`rounded-md border px-3 py-1.5 text-xs ${generationMode === "byok" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground"}`}>Custom OpenRouter / BYOK</button></div><p className="mt-2 text-xs text-muted-foreground">Privacy: the default mode uses the configured app backend. BYOK mode is a setting placeholder until a custom key is entered; keys should remain in memory and never be logged.</p></div>}
+      {showGenerationSettings && (
+        <div className="rounded-lg border border-border bg-secondary/40 p-4">
+          <div className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">AI generation settings</p>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Generation uses the app default path when a backend is configured. Custom OpenRouter / BYOK key entry is not available in this experiment - we do not collect API keys here.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            You can still edit every field manually and export cards locally.
+          </p>
+        </div>
+      )}
 
       {/* Fields */}
       <div className="space-y-4">

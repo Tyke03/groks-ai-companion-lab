@@ -1,15 +1,14 @@
-import { useState, useMemo, useEffect, type ReactNode } from "react";
-import { Search, Scale, X, SlidersHorizontal } from "lucide-react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { Search, Scale, X, SlidersHorizontal, Wrench, Compass } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
-  chatbots, categoryLabels, contentLevelLabels,
-  type Chatbot,
+  chatbots, categoryLabels,
 } from "@/data/chatbots";
 import { ChatbotCard } from "@/components/ChatbotCard";
 import { Layout } from "@/components/Layout";
 import { useDebounce } from "@/hooks/useDebounce";
 import { Helmet } from "react-helmet-async";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
@@ -33,12 +32,6 @@ import {
 
 const MAX_COMPARE = 5;
 
-const apiAccessLabel: Record<string, string> = {
-  none: "None",
-  open: "Open key",
-  subscription: "Paid plan",
-};
-
 interface ActiveChip {
   key: string;
   label: string;
@@ -48,6 +41,7 @@ interface ActiveChip {
 const Index = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const directoryRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [content, setContent] = useState<ContentFilter>("all");
@@ -55,11 +49,9 @@ const Index = () => {
   const [access, setAccess] = useState<AccessTag[]>([]);
   const [cards, setCards] = useState<CardSpec[]>([]);
   const [compareSet, setCompareSet] = useState<Set<string>>(new Set());
-  const [compareOpen, setCompareOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const debouncedSearch = useDebounce(search, 250);
 
-  // Support global search navigation: /  with state { q }
   useEffect(() => {
     const q = (location.state as { q?: string } | null)?.q;
     if (q) {
@@ -135,23 +127,6 @@ const Index = () => {
     [compareSet],
   );
 
-  const comparisonRows: { label: string; value: (b: Chatbot) => ReactNode }[] = [
-    { label: "Category", value: (b) => categoryLabels[b.category] },
-    { label: "Content level", value: (b) => `Level ${b.contentLevel} — ${contentLevelLabels[b.contentLevel]}` },
-    { label: "Model", value: (b) => b.model || "—" },
-    { label: "Context window", value: (b) => b.contextWindow || "—" },
-    { label: "Pricing", value: (b) => b.pricing || "—" },
-    { label: "API access", value: (b) => (b.apiAccess ? apiAccessLabel[b.apiAccess] : "—") },
-    { label: "Memory", value: (b) => b.memory || "—" },
-    { label: "Explicit chat", value: (b) => (b.hasExplicitChat ? "Yes" : "No") },
-    { label: "Image gen", value: (b) => (b.hasImageGen ? "Yes" : "No") },
-    { label: "Voice", value: (b) => (b.hasVoice ? "Yes" : "No") },
-    { label: "Card format", value: (b) => b.cardFormat || "—" },
-    { label: "Known issues", value: (b) => b.knownIssues || "—" },
-    { label: "Last verified", value: (b) => b.lastVerified },
-    { label: "Access type", value: (b) => b.type },
-  ];
-
   const filterPanelProps = {
     category,
     onCategoryChange: setCategory,
@@ -166,34 +141,85 @@ const Index = () => {
     categoryCounts,
   };
 
+  const scrollToDirectory = () => {
+    directoryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const openComparePage = () => {
+    if (compareBots.length >= 2) {
+      navigate(`/compare?platforms=${compareBots.map((bot) => bot.slug).join(",")}`);
+    } else {
+      navigate("/compare");
+    }
+  };
+
   return (
     <Layout>
       <Helmet>
-        <title>AI Companion Hub — AI Platforms Compared</title>
+        <title>AI Companion Hub — Verification-first directory and local workbench</title>
         <meta
           name="description"
-          content="Browse and compare AI companion platforms, local frontends, model providers, and creator tools. Filtered by category, access type, features, card specs, and content level."
+          content="Compare AI companion platforms with dated evidence, then build cards and prompts on your machine. We do not host models, run live chat, or take payments."
         />
       </Helmet>
 
-      {/* Header */}
-      <header className="border-b border-border">
-        <div className="container mx-auto px-4 py-8 sm:py-12">
-          <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl glow-text mb-3">
+      <header className="relative border-b border-border section-band overflow-hidden">
+        <div className="lab-grid absolute inset-0 opacity-40 pointer-events-none" aria-hidden="true" />
+        <div className="container relative mx-auto px-4 py-10 sm:py-14">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+            Evidence lab · Local workbench
+          </p>
+          <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl mb-4 max-w-3xl">
             AI Companion Hub
           </h1>
-          <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Discover {chatbots.length} AI companion platforms — from local privacy-first
-            tools to web-based companions. Filter by category, features, and content
-            level. We catalog platforms; we do not run the models.
+          <p className="max-w-2xl text-base text-muted-foreground sm:text-lg leading-relaxed">
+            Verification-first directory and local workbench: compare companion platforms with dated
+            evidence, then build cards and prompts on your machine — we do not run the models.
           </p>
+
+          <div className="mt-5 flex flex-wrap gap-2" role="list" aria-label="Product honesty">
+            <span className="honesty-pill" role="listitem">No hosted models</span>
+            <span className="honesty-pill" role="listitem">No live chat</span>
+            <span className="honesty-pill" role="listitem">No payments</span>
+            <span className="honesty-pill" role="listitem">{chatbots.length} platforms cataloged</span>
+          </div>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Button size="lg" onClick={scrollToDirectory} className="gap-2">
+              <Compass className="h-4 w-4" />
+              Browse platforms
+            </Button>
+            <Button size="lg" variant="outline" asChild className="gap-2">
+              <Link to="/compare">
+                <Scale className="h-4 w-4" />
+                Compare platforms
+              </Link>
+            </Button>
+            <Button size="lg" variant="outline" asChild className="gap-2">
+              <Link to="/tools">
+                <Wrench className="h-4 w-4" />
+                Open workbench
+              </Link>
+            </Button>
+          </div>
         </div>
       </header>
 
-      {/* Filters */}
-      <div className="sticky top-[57px] z-30 border-b border-border bg-background/80 backdrop-blur-xl">
+      <div
+        id="directory"
+        ref={directoryRef}
+        className="sticky top-[57px] z-30 border-b border-border bg-background/80 backdrop-blur-xl"
+      >
         <div className="container mx-auto flex flex-col gap-4 px-4 py-4">
-          {/* Search + result count + clear-all */}
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-semibold text-foreground">Discover platforms</h2>
+              <p className="text-xs text-muted-foreground">
+                Filter by category, features, access, and content level. Each card shows a last-verified date.
+              </p>
+            </div>
+          </div>
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -216,7 +242,6 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Mobile filter trigger (below md) */}
           <div className="md:hidden">
             <Button
               variant="outline"
@@ -235,12 +260,10 @@ const Index = () => {
             </Button>
           </div>
 
-          {/* Desktop filter panel (md and up) */}
           <div className="hidden md:block">
             <DirectoryFilters {...filterPanelProps} />
           </div>
 
-          {/* Active filter chips */}
           {chips.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Active:</span>
@@ -261,7 +284,6 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Grid */}
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8">
         {filtered.length === 0 ? (
           <div className="py-20 text-center">
@@ -291,7 +313,6 @@ const Index = () => {
         </p>
       </main>
 
-      {/* Mobile filter sheet */}
       <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
         <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
           <SheetHeader className="mb-4 text-left">
@@ -312,7 +333,6 @@ const Index = () => {
         </SheetContent>
       </Sheet>
 
-      {/* Compare bar */}
       {compareBots.length > 0 && (
         <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2">
           <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-card/95 px-4 py-2.5 shadow-2xl backdrop-blur">
@@ -331,7 +351,11 @@ const Index = () => {
                 </span>
               ))}
             </div>
-            <Button size="sm" onClick={() => { setCompareOpen(true); navigate(`/compare?platforms=${compareBots.map((bot) => bot.slug).join(",")}`); }} disabled={compareBots.length < 2}>
+            <Button
+              size="sm"
+              onClick={openComparePage}
+              disabled={compareBots.length < 2}
+            >
               <Scale className="h-4 w-4" />
               Compare ({compareBots.length})
             </Button>
@@ -345,59 +369,6 @@ const Index = () => {
           </div>
         </div>
       )}
-
-      {/* Compare drawer */}
-      <Sheet open={compareOpen} onOpenChange={setCompareOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader className="mb-4">
-            <SheetTitle>Compare Platforms</SheetTitle>
-            <SheetDescription>
-              Side-by-side attributes for {compareBots.length} selected platforms.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="sticky left-0 bg-background px-3 py-2 text-left font-medium text-muted-foreground w-32">Attribute</th>
-                  {compareBots.map((b) => (
-                    <th key={b.slug} className="px-3 py-2 text-left font-display font-semibold text-foreground">
-                      <div className="flex items-center justify-between gap-2">
-                        {b.name}
-                        <button
-                          onClick={() => toggleCompare(b.slug)}
-                          className="text-muted-foreground hover:text-destructive transition-colors"
-                          aria-label={`Remove ${b.name}`}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {comparisonRows.map((row) => (
-                  <tr key={row.label} className="border-b border-border/60">
-                    <td className="sticky left-0 bg-background px-3 py-2 text-xs font-medium text-muted-foreground align-top">{row.label}</td>
-                    {compareBots.map((b) => (
-                      <td key={b.slug} className="px-3 py-2 text-xs text-foreground/90 align-top">
-                        {row.value(b)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-6 flex justify-end">
-            <Button variant="outline" size="sm" onClick={() => setCompareSet(new Set())}>
-              <X className="h-4 w-4" />
-              Clear all
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
     </Layout>
   );
 };

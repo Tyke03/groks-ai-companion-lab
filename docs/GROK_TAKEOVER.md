@@ -262,3 +262,7 @@ Landed on `grok/takeover-audit-and-first-batch` after the audit commit:
 - Doc Consolidator Fetch works when the LLM backend is down; banner copy matches.
 - Added public-env example with public variable names only.
 - Tests: Hub heading, dynamic guide count, 404 chrome; new `src/test/data-integrity.test.ts`.
+
+## Product direction Batch 1 (2026-09-03)
+
+Batch 1 presentation/nav/IA landed. No platform records deleted; no push.

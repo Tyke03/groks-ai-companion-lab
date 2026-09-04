@@ -12,20 +12,26 @@ const Tools = () => {
 
   return (
     <Layout>
-      <header className="border-b border-border">
+      <header className="border-b border-border section-band">
         <div className="container mx-auto px-4 py-8 sm:py-12">
           <div className="flex items-center gap-3 mb-2">
             <Wrench className="h-6 w-6 text-primary" />
             <span className="text-xs font-medium uppercase tracking-widest text-primary">
-              Tools
+              Workbench
             </span>
           </div>
-          <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl glow-text mb-3">
-            AI Chatbot Tools
+          <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl mb-3">
+            Local workbench
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Documentation consolidator, card and persona builders, lorebooks, prompt templates, and connection diagnostics for creators.
+            Draft character cards, prompts, and consolidated docs on your machine.
+            This is a local experiment surface — not hosted chat, and not a place to enter API keys.
           </p>
+          <div className="mt-4 flex flex-wrap gap-2" aria-label="Workbench honesty">
+            <span className="honesty-pill">Runs in your browser</span>
+            <span className="honesty-pill">No credential collection</span>
+            <span className="honesty-pill">Optional AI assist only if configured</span>
+          </div>
           <div className="mt-6 flex flex-wrap gap-2">
             <Link to="/tools/lorebook-builder" className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary"><BookOpen className="h-4 w-4" /> Lorebook Builder</Link>
             <Link to="/tools/persona-builder" className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary"><UserRound className="h-4 w-4" /> Persona Builder</Link>
@@ -38,13 +44,13 @@ const Tools = () => {
         <Tabs defaultValue={defaultTab} className="w-full">
           <TabsList className="w-full justify-start bg-secondary border border-border rounded-lg p-1 mb-8 overflow-x-auto">
             <TabsTrigger value="consolidator" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
-              📄 Doc Consolidator
+              Doc Consolidator
             </TabsTrigger>
             <TabsTrigger value="character" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
-              🎭 Character Builder
+              Character Builder
             </TabsTrigger>
             <TabsTrigger value="prompts" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
-              ✍️ Prompt Builder
+              Prompt Builder
             </TabsTrigger>
           </TabsList>
 

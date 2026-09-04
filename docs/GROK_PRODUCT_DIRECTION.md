@@ -172,3 +172,6 @@ This experiment:
 ## Changelog
 
 - **2026-09-03** - Initial product direction document committed on grok/product-direction-batch-1.
+
+- **2026-09-03** - Batch 1 landed on this branch.
+

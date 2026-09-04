@@ -57,6 +57,11 @@ describe("Directory page", () => {
   it("renders the new taxonomy, content levels, and added platforms", () => {
     renderPage(<Index />);
     expect(screen.getByRole("heading", { name: "AI Companion Hub" })).toBeInTheDocument();
+    expect(screen.getByText(/Verification-first directory and local workbench/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Browse platforms/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Compare platforms/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open workbench/i })).toBeInTheDocument();
+    expect(screen.getByText("No hosted models")).toBeInTheDocument();
     // New six-category taxonomy — category single-select controls
     expect(screen.getByRole("radio", { name: /Local Frontends/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Hosted RP Platforms/ })).toBeInTheDocument();
@@ -70,17 +75,19 @@ describe("Directory page", () => {
     expect(screen.queryByText(/affiliate/i)).not.toBeInTheDocument();
   });
 
-  it("supports the compare multi-select view", () => {
-    renderPage(<Index />);
+  it("supports the compare multi-select and routes to the Compare page", () => {
+    renderPage(
+      <Routes>
+        <Route path="/" element={<Index />} />
+        <Route path="/compare" element={<div>Compare page destination</div>} />
+      </Routes>,
+    );
     fireEvent.click(screen.getByLabelText("Add Kindroid to comparison"));
     fireEvent.click(screen.getByLabelText("Add OpenRouter to comparison"));
     const compareButton = screen.getByRole("button", { name: /Compare \(2\)/ });
     expect(compareButton).toBeInTheDocument();
     fireEvent.click(compareButton);
-    expect(screen.getByText("Compare Platforms")).toBeInTheDocument();
-    // Comparison table shows shared attributes
-    expect(screen.getByText("Context window")).toBeInTheDocument();
-    expect(screen.getByText("API access")).toBeInTheDocument();
+    expect(screen.getByText("Compare page destination")).toBeInTheDocument();
   });
 });
 
@@ -168,6 +175,8 @@ describe("Documentation", () => {
 describe("Tools", () => {
   it("renders the doc consolidator with URL input and working tabs", () => {
     renderPage(<Tools />);
+    expect(screen.getByRole("heading", { name: "Local workbench" })).toBeInTheDocument();
+    expect(screen.getByText("No credential collection")).toBeInTheDocument();
     expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
     expect(screen.getByText("Fetch Documentation from URL")).toBeInTheDocument();
     // No AI-unavailable banner when backend is healthy

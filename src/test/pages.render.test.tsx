@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -57,7 +57,10 @@ describe("Directory page", () => {
   it("renders the new taxonomy, content levels, and added platforms", () => {
     renderPage(<Index />);
     expect(screen.getByRole("heading", { name: "AI Companion Hub" })).toBeInTheDocument();
-    expect(screen.getByText(/Verification-first directory and local workbench/i)).toBeInTheDocument();
+    // Thesis lives in the hero <header> (banner); same phrase also appears in document title + footer.
+    expect(
+      within(screen.getByRole("banner")).getByText(/Verification-first directory and local workbench/i),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Browse platforms/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Compare platforms/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open workbench/i })).toBeInTheDocument();
@@ -200,8 +203,10 @@ describe("Tools", () => {
 describe("NotFound", () => {
   it("renders a 404 inside site chrome", () => {
     renderPage(<NotFound />, "/does-not-exist");
-    expect(screen.getByText("404")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Return to the directory/i })).toBeInTheDocument();
-    expect(screen.getByText("AI Companion Hub")).toBeInTheDocument();
+    const main = screen.getByRole("main");
+    expect(within(main).getByRole("heading", { name: "404" })).toBeInTheDocument();
+    expect(within(main).getByRole("link", { name: /Return to the directory/i })).toBeInTheDocument();
+    // Brand appears in nav logo link and footer; assert chrome via the nav link.
+    expect(screen.getByRole("link", { name: /AI Companion Hub/i })).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info } from "lucide-react";
+import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { embedCardInPng, extractCardFromPng } from "@/lib/pngChunk";
@@ -13,6 +13,9 @@ import {
   buildV3Envelope,
   sanitizeFilename,
   CardImportError,
+  hasV3OnlyContent,
+  lossyV2Warning,
+  requiresLossyV2Confirm,
 } from "@/lib/cardCodec";
 import {
   CANONICAL_ASSET_TYPES,
@@ -28,6 +31,17 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
+import {
+  createNewCard,
+  deleteCard,
+  getActiveSlot,
+  loadCardLibrary,
+  saveCardLibrary,
+  switchActiveCard,
+  updateActiveSlot,
+  type CardLibrary,
+  type SpecVersion,
+} from "@/lib/cardStorage";
 import { estimateCardTokens } from "@/lib/cardTokens";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import {
@@ -89,7 +103,6 @@ function CharCountIndicator({ current, max }: { current: number; max: number }) 
   );
 }
 
-type SpecVersion = "v2" | "v3";
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
   icon: "Icon / Portrait",
@@ -158,21 +171,16 @@ function toList(value: string): string[] {
 }
 
 export const CharacterCardBuilder = () => {
-  const [card, setCard] = useState<CardData>(() => {
-    try {
-      const raw: unknown = JSON.parse(localStorage.getItem("ai-companion-hub-card-draft") || "null");
-      return { ...emptyCardData(), ...(raw && typeof raw === "object" ? (raw as Partial<CardData>) : {}) };
-    } catch { return emptyCardData(); }
-  });
-  const [preserved, setPreserved] = useState<PreservedData>(() => {
-    try {
-      const raw: unknown = JSON.parse(localStorage.getItem("ai-companion-hub-card-preserved") || "null");
-      return { ...emptyPreserved(), ...(raw && typeof raw === "object" ? (raw as Partial<PreservedData>) : {}) };
-    } catch { return emptyPreserved(); }
-  });
-  const [importedFormat, setImportedFormat] = useState<CardFormat | null>(null);
-  const [importWarnings, setImportWarnings] = useState<string[]>([]);
-  const [specVersion, setSpecVersion] = useState<SpecVersion>("v2");
+  const [library, setLibrary] = useState<CardLibrary>(() => loadCardLibrary());
+  const activeSlot = getActiveSlot(library);
+  const [card, setCard] = useState<CardData>(() => activeSlot.card);
+  const [preserved, setPreserved] = useState<PreservedData>(() => activeSlot.preserved);
+  const [importedFormat, setImportedFormat] = useState<CardFormat | null>(() => activeSlot.importedFormat);
+  const [importWarnings, setImportWarnings] = useState<string[]>(() => activeSlot.importWarnings);
+  const [specVersion, setSpecVersion] = useState<SpecVersion>(() => activeSlot.specVersion);
+  const [lossyExportKind, setLossyExportKind] = useState<"copy" | "json" | "png" | null>(null);
+  const [pendingSpecV2, setPendingSpecV2] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const [previewMode, setPreviewMode] = useState<"json" | "chat">("json");
   const [copied, setCopied] = useState(false);
@@ -188,13 +196,20 @@ export const CharacterCardBuilder = () => {
   const ai = useAiBackendStatus();
   const aiUnavailable = ai.status === "unavailable";
 
+  // Persist the active slot whenever editor state changes (multi-card safe).
   useEffect(() => {
-    try { localStorage.setItem("ai-companion-hub-card-draft", JSON.stringify(card)); } catch { /* quota */ }
-  }, [card]);
-
-  useEffect(() => {
-    try { localStorage.setItem("ai-companion-hub-card-preserved", JSON.stringify(preserved)); } catch { /* quota */ }
-  }, [preserved]);
+    setLibrary((prev) => {
+      const next = updateActiveSlot(prev, {
+        card,
+        preserved,
+        specVersion,
+        importedFormat,
+        importWarnings,
+      });
+      saveCardLibrary(next);
+      return next;
+    });
+  }, [card, preserved, specVersion, importedFormat, importWarnings]);
 
   const pngPreviewUrl = useMemo(() => pngFile ? URL.createObjectURL(pngFile) : null, [pngFile]);
 
@@ -273,14 +288,17 @@ export const CharacterCardBuilder = () => {
   const tokenEstimate = useMemo(() => estimateCardTokens(card, preserved), [card, preserved]);
   const renderGreeting = (): ReactNode => card.first_mes.split(/(\*[^*]+\*|"[^"]+")/g).filter(Boolean).map((part, index) => part.startsWith("*") && part.endsWith("*") ? <em key={index} className="text-muted-foreground">{part}</em> : part.startsWith('"') && part.endsWith('"') ? <strong key={index} className="text-foreground">{part}</strong> : <span key={index}>{part}</span>);
 
-  const handleCopyJson = () => {
+  const lossyWarningText = useMemo(() => lossyV2Warning(card, preserved), [card, preserved]);
+  const needsLossyConfirm = requiresLossyV2Confirm(specVersion, card, preserved);
+
+  const performCopyJson = () => {
     navigator.clipboard.writeText(JSON.stringify(currentExport.envelope, null, 2));
     toastWarnings(currentExport.warnings);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownloadJson = () => {
+  const performDownloadJson = () => {
     const json = JSON.stringify(currentExport.envelope, null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -293,9 +311,9 @@ export const CharacterCardBuilder = () => {
     toast({ title: "Downloaded", description: `Character card ${specVersion.toUpperCase()} JSON downloaded.` });
   };
 
-  const handleDownloadPng = async () => {
+  const performDownloadPng = async () => {
     if (!pngFile) {
-      toast({ title: "No image", description: "Upload a PNG image first to embed the card.", variant: "destructive" });
+      toast({ title: "No image", description: "Upload a PNG portrait above first — PNG export stays disabled until a portrait is chosen.", variant: "destructive" });
       return;
     }
     if (pngFile.size > MAX_PNG_BYTES) {
@@ -321,6 +339,70 @@ export const CharacterCardBuilder = () => {
     } catch (err) {
       toast({ title: "Error", description: errMsg(err) || "Failed to embed card in PNG.", variant: "destructive" });
     }
+  };
+
+  const requestExport = (kind: "copy" | "json" | "png") => {
+    if (needsLossyConfirm) {
+      setLossyExportKind(kind);
+      return;
+    }
+    if (kind === "copy") performCopyJson();
+    else if (kind === "json") performDownloadJson();
+    else void performDownloadPng();
+  };
+
+  const confirmLossyExport = () => {
+    const kind = lossyExportKind;
+    setLossyExportKind(null);
+    if (kind === "copy") performCopyJson();
+    else if (kind === "json") performDownloadJson();
+    else if (kind === "png") void performDownloadPng();
+  };
+
+  const handleSpecChange = (checked: boolean) => {
+    if (!checked && hasV3OnlyContent(card, preserved) && specVersion === "v3") {
+      setPendingSpecV2(true);
+      return;
+    }
+    setSpecVersion(checked ? "v3" : "v2");
+  };
+
+  const flushThen = (mutator: (lib: CardLibrary) => CardLibrary) => {
+    const flushed = updateActiveSlot(library, {
+      card,
+      preserved,
+      specVersion,
+      importedFormat,
+      importWarnings,
+    });
+    const next = mutator(flushed);
+    saveCardLibrary(next);
+    setLibrary(next);
+    const slot = getActiveSlot(next);
+    setCard(slot.card);
+    setPreserved(slot.preserved);
+    setSpecVersion(slot.specVersion);
+    setImportedFormat(slot.importedFormat);
+    setImportWarnings(slot.importWarnings);
+  };
+
+  const handleNewCard = () => {
+    flushThen((lib) => createNewCard(lib));
+    setPngFile(null);
+    toast({ title: "New card", description: "Started a blank card. Your previous card stays in the local list." });
+  };
+
+  const handleSelectCard = (id: string) => {
+    if (id === library.activeId) return;
+    flushThen((lib) => switchActiveCard(lib, id));
+    setPngFile(null);
+  };
+
+  const handleDeleteCard = (id: string) => {
+    flushThen((lib) => deleteCard(lib, id));
+    setPngFile(null);
+    setPendingDeleteId(null);
+    toast({ title: "Removed", description: "Card removed from the local list." });
   };
 
   const handleGenerateField = async (fieldName: keyof CardData) => {
@@ -447,10 +529,13 @@ export const CharacterCardBuilder = () => {
       const result = importCard(parsedJson);
       applyImport(result);
       setImportError(null);
+      const unwrapped = result.warnings.some((w) => w.includes("without a V2/V3 envelope"));
       toast({
         title: "Imported",
         description: result.format === "v1"
-          ? "V1 card loaded — it will export as V2 (upgraded)."
+          ? (unwrapped
+            ? "Flat card loaded (no V2/V3 envelope) — will export wrapped as V2. Not labeled as a V1 file."
+            : "V1 card loaded — it will export as V2 (upgraded).")
           : result.format === "v3"
             ? "V3 draft card loaded."
             : "V2 character card loaded.",
@@ -468,7 +553,7 @@ export const CharacterCardBuilder = () => {
     setImportedFormat(null);
     setImportWarnings([]);
     setPngFile(null);
-    toast({ title: "Cleared", description: "All fields have been reset." });
+    toast({ title: "Cleared", description: "Active card fields reset. Other saved cards are unchanged." });
   };
 
   const v2Fields: { key: keyof CardData; label: string; multiline?: boolean; placeholder: string }[] = [
@@ -524,12 +609,60 @@ export const CharacterCardBuilder = () => {
         </div>
       )}
 
+      {/* Local multi-card library */}
+      <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3 space-y-3" data-testid="card-library">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">Local cards</p>
+            <span className="text-xs text-muted-foreground">Saved in this browser only</span>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleNewCard} data-testid="new-card-button">
+            <Plus className="h-4 w-4" /> New card
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2" role="list" aria-label="Saved character cards">
+          {library.cards.map((slot) => {
+            const active = slot.id === library.activeId;
+            return (
+              <div key={slot.id} role="listitem" className="flex items-center gap-1">
+                <Button
+                  variant={active ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleSelectCard(slot.id)}
+                  aria-current={active ? "true" : undefined}
+                  data-testid={`card-slot-${slot.id}`}
+                  className="max-w-[12rem] truncate"
+                  title={slot.label}
+                >
+                  {slot.label}
+                </Button>
+                {library.cards.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-muted-foreground hover:text-destructive"
+                    aria-label={`Remove ${slot.label} from local list`}
+                    onClick={() => setPendingDeleteId(slot.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Starting a new card keeps prior cards in this list — nothing is wiped silently.
+        </p>
+      </div>
+
       {/* Spec version toggle */}
       <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 px-4 py-3">
         <span className={`text-sm font-medium ${specVersion === "v2" ? "text-foreground" : "text-muted-foreground"}`}>V2</span>
         <Switch
           checked={specVersion === "v3"}
-          onCheckedChange={(checked) => setSpecVersion(checked ? "v3" : "v2")}
+          onCheckedChange={handleSpecChange}
           aria-label="Use V3 draft format"
           aria-describedby="character-card-version-help"
         />
@@ -537,7 +670,9 @@ export const CharacterCardBuilder = () => {
         <span id="character-card-version-help" className="text-xs text-muted-foreground ml-2">
           {specVersion === "v3"
             ? "chara_card_v3 (draft spec) — includes nickname, source, assets, multilingual notes. May not be fully supported by all frontends."
-            : "chara_card_v2 — stable, widely supported"}
+            : needsLossyConfirm
+              ? "chara_card_v2 — stable. This editor still holds V3-only fields that V2 export will omit (confirm required)."
+              : "chara_card_v2 — stable, widely supported"}
         </span>
       </div>
 
@@ -546,7 +681,11 @@ export const CharacterCardBuilder = () => {
         <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3 space-y-1.5" role="status" aria-live="polite">
           {importedFormat && (
             <p className="text-sm font-medium text-foreground">
-              {importedFormat === "v1" && "Imported as V1 — this card will export as V2 (upgraded)."}
+              {importedFormat === "v1" && (
+                importWarnings.some((w) => w.includes("without a V2/V3 envelope"))
+                  ? "Imported as a flat card (no V2/V3 envelope) — not a labeled V1 file. Export will wrap as V2."
+                  : "Imported as V1 — this card will export as V2 (upgraded)."
+              )}
               {importedFormat === "v2" && "Imported as V2 character card."}
               {importedFormat === "v3" && "Imported as V3 draft character card."}
             </p>
@@ -787,17 +926,36 @@ export const CharacterCardBuilder = () => {
       </div>
 
       {/* Export actions */}
-      <div className="flex flex-wrap gap-3">
-        <Button onClick={handleCopyJson}>
-          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          {copied ? "Copied!" : `Copy ${specVersion === "v3" ? "V3 (draft)" : "V2"} JSON`}
-        </Button>
-        <Button variant="outline" onClick={handleDownloadJson}>
-          <Download className="h-4 w-4" /> Download JSON
-        </Button>
-        <Button variant="outline" onClick={handleDownloadPng} disabled={!pngFile}>
-          <Image className="h-4 w-4" /> Export as PNG
-        </Button>
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={() => requestExport("copy")} data-testid="copy-json-button">
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? "Copied!" : `Copy ${specVersion === "v3" ? "V3 (draft)" : "V2"} JSON`}
+          </Button>
+          <Button variant="outline" onClick={() => requestExport("json")} data-testid="download-json-button">
+            <Download className="h-4 w-4" /> Download JSON
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => requestExport("png")}
+            disabled={!pngFile}
+            title={!pngFile ? "Upload a PNG portrait above to enable PNG export" : "Embed card into the uploaded portrait"}
+            aria-describedby="png-export-help"
+            data-testid="export-png-button"
+          >
+            <Image className="h-4 w-4" /> Export as PNG
+          </Button>
+        </div>
+        {!pngFile && (
+          <p id="png-export-help" className="text-xs text-muted-foreground" data-testid="png-export-disabled-hint">
+            PNG export is disabled until you upload a portrait in “PNG Image for Card Embedding” above.
+          </p>
+        )}
+        {needsLossyConfirm && (
+          <p className="text-xs text-amber-300" role="status" data-testid="lossy-v2-hint">
+            V2 export will omit V3-only fields — you will be asked to confirm before download/copy.
+          </p>
+        )}
       </div>
 
       {/* Approximate token estimate */}
@@ -857,6 +1015,67 @@ export const CharacterCardBuilder = () => {
             </div>
           )}
       </div>
+
+      {/* Lossy V2 export confirm */}
+      <AlertDialog open={lossyExportKind !== null} onOpenChange={(open) => { if (!open) setLossyExportKind(null); }}>
+        <AlertDialogContent data-testid="lossy-v2-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Export V2 without V3 fields?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {lossyWarningText || "This V2 export omits V3 draft fields present in the editor."}
+              {" "}Confirm to continue with a lossy V2 export. Cancel keeps your editor data unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="lossy-v2-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmLossyExport} data-testid="lossy-v2-confirm-action">
+              Export V2 anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Spec switch V3 → V2 confirm */}
+      <AlertDialog open={pendingSpecV2} onOpenChange={(open) => { if (!open) setPendingSpecV2(false); }}>
+        <AlertDialogContent data-testid="spec-switch-lossy-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch to V2?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {lossyWarningText || "V3-only fields will not be included in V2 exports."}
+              {" "}Editor values are kept, but V3 fields are hidden while V2 is selected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Stay on V3</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { setPendingSpecV2(false); setSpecVersion("v2"); }}
+              data-testid="spec-switch-confirm"
+            >
+              Switch to V2
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete card from library */}
+      <AlertDialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this local card?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the card from your browser list. Other cards stay available.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (pendingDeleteId) handleDeleteCard(pendingDeleteId); }}
+            >
+              Remove card
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

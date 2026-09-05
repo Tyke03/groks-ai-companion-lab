@@ -1,4 +1,6 @@
 import { strictAssetSchema, v2EnvelopeSchema, v3EnvelopeSchema } from "./cardSchema";
+import { lossyV2Warning } from "./cardLossy";
+export { hasV3OnlyContent, lossyV2Warning, requiresLossyV2Confirm } from "./cardLossy";
 import {
   CANONICAL_ASSET_TYPES,
   CORE_V1_FIELDS,
@@ -203,7 +205,25 @@ export function importCard(json: unknown): CardImportResult {
 
   if (format === "v1") {
     data = json;
-    warnings.push("Imported as V1. This card will export as V2 (upgraded).");
+    const v2Hints = [
+      "creator_notes",
+      "system_prompt",
+      "post_history_instructions",
+      "alternate_greetings",
+      "tags",
+      "creator",
+      "character_version",
+      "extensions",
+      "character_book",
+    ];
+    const looksUnwrappedV2 = v2Hints.some((key) => key in json);
+    if (looksUnwrappedV2) {
+      warnings.push(
+        'Imported as a flat card without a V2/V3 envelope (often mistaken for V1). This is not a labeled V1 card file — include "spec": "chara_card_v2" for a true V2 import. Export will wrap as V2.',
+      );
+    } else {
+      warnings.push("Imported as V1. This card will export as V2 (upgraded).");
+    }
   } else {
     const schema = format === "v2" ? v2EnvelopeSchema : v3EnvelopeSchema;
     const parsed = schema.safeParse(json);
@@ -237,26 +257,12 @@ function buildBaseData(preserved: PreservedData): Record<string, unknown> {
   return data;
 }
 
-function v3OnlyContentPresent(data: CardData, preserved: PreservedData): boolean {
-  return Boolean(
-    (data.nickname && data.nickname.trim()) ||
-    data.source.some((s) => s.trim()) ||
-    data.group_only_greetings.some((g) => g.trim()) ||
-    (data.creator_notes_multilingual && data.creator_notes_multilingual.trim()) ||
-    preserved.assets.length > 0 ||
-    preserved.preservedAssets.length > 0 ||
-    preserved.creation_date !== undefined ||
-    preserved.modification_date !== undefined,
-  );
-}
-
 /** Build a stable, validated Character Card V2 envelope. */
 export function buildV2Envelope(data: CardData, preserved: PreservedData): CardExport {
   const warnings: string[] = [];
-  if (v3OnlyContentPresent(data, preserved)) {
-    warnings.push(
-      "This card contains V3 draft fields (nickname, source, group greetings, assets, or multilingual notes) that are not part of V2 and will be omitted from the V2 export.",
-    );
+  const lossy = lossyV2Warning(data, preserved);
+  if (lossy) {
+    warnings.push(lossy);
   }
 
   const envelope: CardEnvelope = {

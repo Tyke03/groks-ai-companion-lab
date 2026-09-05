@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { chatbots, type Category } from "@/data/chatbots";
+import { PlatformCombobox } from "@/components/tools/PlatformCombobox";
+import { chatbots } from "@/data/chatbots";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText } from "lucide-react";
@@ -11,16 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 
 const MAX_CHARS = 32000;
 
-const CATEGORY_LABELS: Record<Category, string> = {
-  local: "Local frontends",
-  hosted: "Hosted platforms",
-  libraries: "Card libraries",
-  companion: "Companions",
-  providers: "Model providers",
-  hybrid: "Hybrid",
-};
-
-const CATEGORY_ORDER: Category[] = ["local", "hosted", "libraries", "companion", "providers", "hybrid"];
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -97,7 +87,6 @@ const offlineGuideSkeleton = (service: string) => {
 export const DocConsolidator = () => {
   const [serviceName, setServiceName] = useState("");
   const [customName, setCustomName] = useState("");
-  const [serviceFilter, setServiceFilter] = useState("");
   const [inputText, setInputText] = useState("");
   const [docUrl, setDocUrl] = useState("");
   const [fetchHint, setFetchHint] = useState("");
@@ -113,18 +102,6 @@ export const DocConsolidator = () => {
   const charCount = inputText.length;
   const isOverLimit = charCount > MAX_CHARS;
 
-  const groupedServices = useMemo(() => {
-    const q = serviceFilter.trim().toLowerCase();
-    const filtered = chatbots.filter((bot) => {
-      if (!q) return true;
-      return [bot.name, bot.slug, bot.category, bot.type].join(" ").toLowerCase().includes(q);
-    });
-    return CATEGORY_ORDER.map((category) => ({
-      category,
-      label: CATEGORY_LABELS[category],
-      bots: filtered.filter((bot) => bot.category === category),
-    })).filter((group) => group.bots.length > 0);
-  }, [serviceFilter]);
 
   const handleFetchUrl = async () => {
     setFetchHint("");
@@ -247,8 +224,8 @@ export const DocConsolidator = () => {
           Documentation Consolidator
         </h2>
         <p className="text-sm text-muted-foreground">
-          Paste documentation first (or optionally fetch a public URL). Draft a local markdown skeleton anytime.
-          AI consolidation is optional and only runs when a backend is configured — no invented NSFW or payment claims.
+          Secondary workbench tool: build a Hub guide from pasted notes (or optionally fetch a public URL).
+          Draft a local markdown skeleton anytime. AI consolidation is optional and only runs when a backend is configured — no invented NSFW or payment claims.
         </p>
       </div>
 
@@ -279,35 +256,16 @@ export const DocConsolidator = () => {
       <div className="space-y-4">
         <div>
           <label htmlFor="doc-service-name" className="text-sm font-medium text-foreground mb-1 block">Service Name</label>
-          <Input
-            id="doc-service-filter"
-            aria-label="Filter services"
-            placeholder="Filter services by name or category..."
-            className="mb-2 bg-secondary border-border"
-            value={serviceFilter}
-            onChange={(e) => setServiceFilter(e.target.value)}
+          <PlatformCombobox
+            id="doc-service-name"
+            value={serviceName}
+            onValueChange={(v) => { setServiceName(v); if (v !== "custom") setCustomName(""); }}
+            options={chatbots}
+            allowCustom
+            placeholder="Select a platform..."
+            searchPlaceholder="Search platforms A–Z..."
+            aria-label="Select a platform"
           />
-          <Select value={serviceName} onValueChange={(v) => { setServiceName(v); if (v !== "custom") setCustomName(""); }}>
-            <SelectTrigger id="doc-service-name" className="bg-secondary border-border">
-              <SelectValue placeholder="Select a platform..." />
-            </SelectTrigger>
-            <SelectContent>
-              {groupedServices.map((group) => (
-                <SelectGroup key={group.category}>
-                  <SelectLabel>{group.label}</SelectLabel>
-                  {group.bots.map((bot) => (
-                    <SelectItem key={bot.slug} value={bot.name}>
-                      {bot.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              ))}
-              <SelectGroup>
-                <SelectLabel>Other</SelectLabel>
-                <SelectItem value="custom">Custom / Other</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
           {serviceName === "custom" && (
             <Input
               id="doc-custom-service-name"

@@ -45,6 +45,8 @@ const countText = (n: number) => `${n} of ${total} platforms`;
 
 beforeEach(() => {
   localStorage.setItem("age_verified", "1");
+  // Discover filters default collapsed; expand for control assertions.
+  localStorage.setItem("discover_filters_open", "1");
 });
 
 afterEach(() => {
@@ -109,8 +111,15 @@ describe("Directory filter controls", () => {
     expect(screen.getByText("No platforms match your search and filters.")).toBeInTheDocument();    expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
   });
 
-  it("exposes the mobile filters trigger", () => {
+  it("exposes the Filters toggle (collapsed chrome)", () => {
     renderPage();
-    expect(screen.getByRole("button", { name: /Filters/ })).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /Filters/ });
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("radio", { name: "SFW only" })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByRole("radio", { name: "SFW only" })).toBeInTheDocument();
   });
 });

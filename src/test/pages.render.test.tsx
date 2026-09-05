@@ -47,6 +47,7 @@ const renderPage = (ui: React.ReactNode, route = "/") =>
 
 beforeEach(() => {
   localStorage.setItem("age_verified", "1");
+  localStorage.setItem("discover_filters_open", "1");
 });
 
 afterEach(() => {
@@ -176,29 +177,33 @@ describe("Documentation", () => {
 });
 
 describe("Tools", () => {
-  it("renders the doc consolidator with URL input and working tabs", () => {
+  it("defaults to Character Card Builder and keeps working tabs", () => {
     renderPage(<Tools />);
     expect(screen.getByRole("heading", { name: "Local workbench" })).toBeInTheDocument();
     expect(screen.getByText("No credential collection")).toBeInTheDocument();
-    expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
-    expect(screen.getByText("Optional: Fetch from URL")).toBeInTheDocument();
-    expect(screen.getByText("Paste Documentation")).toBeInTheDocument();
-    // No AI-unavailable banner when backend is healthy
-    expect(screen.queryByText(/AI backend unavailable/i)).not.toBeInTheDocument();
 
-    // Character Card Builder tab exposes the new list editors
-    // (Radix Tabs activates on mouseDown)
-    fireEvent.mouseDown(screen.getByRole("tab", { name: /Character Builder/i }));
+    // Character Card Builder is the default selected tool
+    expect(screen.getByRole("tab", { name: /Character Card Builder/i })).toHaveAttribute("data-state", "active");
     expect(screen.getByText("Alternate Greetings")).toBeInTheDocument();
     expect(screen.getByText("Add alternate greeting")).toBeInTheDocument();
     expect(screen.getByText("Character Version")).toBeInTheDocument();
+    // Doc Consolidator is not the default panel
+    expect(screen.queryByText("Documentation Consolidator")).not.toBeInTheDocument();
+    expect(screen.queryByText(/AI backend unavailable/i)).not.toBeInTheDocument();
 
     // Prompt Builder tab exposes lean library (no filter-override / unrestricted templates)
+    // (Radix Tabs activates on mouseDown)
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Prompt Builder/i }));
     expect(screen.getByText("System — Jailbreak-neutral RP")).toBeInTheDocument();
     expect(screen.getByText("SillyTavern — Author's Note Preset")).toBeInTheDocument();
     expect(screen.queryByText("Filter Override — Basic")).not.toBeInTheDocument();
     expect(screen.queryByText("Unrestricted Mode — Advanced")).not.toBeInTheDocument();
+
+    // Doc Consolidator remains available as a secondary tab
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Doc Consolidator/i }));
+    expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
+    expect(screen.getByText("Optional: Fetch from URL")).toBeInTheDocument();
+    expect(screen.getByText("Paste Documentation")).toBeInTheDocument();
   });
 });
 

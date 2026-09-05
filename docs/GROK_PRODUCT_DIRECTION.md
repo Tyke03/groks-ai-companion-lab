@@ -171,6 +171,8 @@ This experiment:
 
 ## Changelog
 
+- **2026-09-04** - UX: Character Card Builder is the default workbench tool; PlatformCombobox (A–Z + search) for Doc Consolidator service picker; Discover filters collapsible with `discover_filters_open` persistence.
+
 - **2026-09-04** - Tools offline usefulness: Doc Consolidator paste-first + offline guide skeleton; lean 9-template prompt library with useWhen; Prompt Builder local fill-examples path.
 
 - **2026-09-03** - Initial product direction document committed on grok/product-direction-batch-1.

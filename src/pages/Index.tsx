@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Search, Scale, X, SlidersHorizontal, Wrench, Compass } from "lucide-react";
+import { Search, Scale, X, SlidersHorizontal, Wrench, Compass, ChevronDown, ChevronUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   chatbots, categoryLabels,
@@ -9,9 +9,6 @@ import { Layout } from "@/components/Layout";
 import { useDebounce } from "@/hooks/useDebounce";
 import { Helmet } from "react-helmet-async";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import {
-  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { DirectoryFilters } from "@/components/directory/DirectoryFilters";
 import {
@@ -31,6 +28,20 @@ import {
 } from "@/lib/filters";
 
 const MAX_COMPARE = 5;
+const FILTERS_OPEN_KEY = "discover_filters_open";
+
+function readFiltersOpenDefault(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const stored = window.localStorage.getItem(FILTERS_OPEN_KEY);
+    if (stored === "1") return true;
+    if (stored === "0") return false;
+  } catch {
+    /* ignore */
+  }
+  // Prefer collapsed so cards stay above the fold (esp. mobile).
+  return false;
+}
 
 interface ActiveChip {
   key: string;
@@ -49,7 +60,7 @@ const Index = () => {
   const [access, setAccess] = useState<AccessTag[]>([]);
   const [cards, setCards] = useState<CardSpec[]>([]);
   const [compareSet, setCompareSet] = useState<Set<string>>(new Set());
-  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(readFiltersOpenDefault);
   const debouncedSearch = useDebounce(search, 250);
 
   useEffect(() => {
@@ -59,6 +70,14 @@ const Index = () => {
       window.history.replaceState({}, "");
     }
   }, [location.state]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FILTERS_OPEN_KEY, filtersOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [filtersOpen]);
 
   const toggleCompare = (slug: string) => {
     setCompareSet((prev) => {
@@ -210,16 +229,17 @@ const Index = () => {
         ref={directoryRef}
         className="sticky top-[57px] z-30 border-b border-border bg-background/80 backdrop-blur-xl"
       >
-        <div className="container mx-auto flex flex-col gap-4 px-4 py-4">
+        <div className="container mx-auto flex flex-col gap-3 px-4 py-3 sm:py-4">
           <div className="flex items-end justify-between gap-3">
             <div>
               <h2 className="font-display text-lg font-semibold text-foreground">Discover platforms</h2>
-              <p className="text-xs text-muted-foreground">
+              <p className="hidden text-xs text-muted-foreground sm:block">
                 Filter by category, features, access, and content level. Each card shows a last-verified date.
               </p>
             </div>
           </div>
 
+          {/* Compact bar: search + count + Filters toggle */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -231,10 +251,26 @@ const Index = () => {
                 aria-label="Search platforms"
               />
             </div>
-            <div className="flex items-center justify-between gap-3 sm:justify-end">
-              <p className="text-sm text-muted-foreground" aria-live="polite">
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <p className="text-sm text-muted-foreground whitespace-nowrap" aria-live="polite">
                 {filtered.length} of {chatbots.length} platforms
               </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFiltersOpen((v) => !v)}
+                aria-expanded={filtersOpen}
+                aria-controls="discover-filters-panel"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                    {activeFilterCount}
+                  </span>
+                )}
+                {filtersOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </Button>
               <Button variant="outline" size="sm" onClick={clearAll} disabled={!filterActive}>
                 <X className="h-4 w-4" />
                 Clear all
@@ -242,28 +278,7 @@ const Index = () => {
             </div>
           </div>
 
-          <div className="md:hidden">
-            <Button
-              variant="outline"
-              className="w-full justify-between"
-              onClick={() => setMobileFiltersOpen(true)}
-            >
-              <span className="inline-flex items-center gap-2">
-                <SlidersHorizontal className="h-4 w-4" />
-                Filters
-              </span>
-              {activeFilterCount > 0 && (
-                <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-                  {activeFilterCount}
-                </span>
-              )}
-            </Button>
-          </div>
-
-          <div className="hidden md:block">
-            <DirectoryFilters {...filterPanelProps} />
-          </div>
-
+          {/* Active filter chips — visible even when panel collapsed */}
           {chips.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Active:</span>
@@ -279,6 +294,12 @@ const Index = () => {
                   <X className="h-3 w-3" />
                 </button>
               ))}
+            </div>
+          )}
+
+          {filtersOpen && (
+            <div id="discover-filters-panel" className="pt-1">
+              <DirectoryFilters {...filterPanelProps} />
             </div>
           )}
         </div>
@@ -312,26 +333,6 @@ const Index = () => {
           last-verified date.
         </p>
       </main>
-
-      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
-          <SheetHeader className="mb-4 text-left">
-            <SheetTitle>Filters</SheetTitle>
-            <SheetDescription>
-              Refine the directory by category, content, features, access, and card specs.
-            </SheetDescription>
-          </SheetHeader>
-          <DirectoryFilters {...filterPanelProps} />
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={clearAll}>
-              Clear all
-            </Button>
-            <Button size="sm" onClick={() => setMobileFiltersOpen(false)}>
-              Show {filtered.length} results
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
 
       {compareBots.length > 0 && (
         <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2">

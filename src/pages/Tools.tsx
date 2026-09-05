@@ -6,9 +6,12 @@ import { DocConsolidator } from "@/components/tools/DocConsolidator";
 import { CharacterCardBuilder } from "@/components/tools/CharacterCardBuilder";
 import { PromptBuilder } from "@/components/tools/PromptBuilder";
 
+const TAB_VALUES = new Set(["character", "prompts", "consolidator"]);
+
 const Tools = () => {
   const [searchParams] = useSearchParams();
-  const defaultTab = searchParams.get("tab") === "prompts" ? "prompts" : "consolidator";
+  const requested = searchParams.get("tab") ?? "";
+  const defaultTab = TAB_VALUES.has(requested) ? requested : "character";
 
   return (
     <Layout>
@@ -24,8 +27,7 @@ const Tools = () => {
             Local workbench
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Draft character cards and prompts locally, then paste into SillyTavern or your host.
-            Doc Consolidator is paste/fetch-first — AI consolidate is optional. Not hosted chat, and not a place to enter API keys.
+            Start with Character Card Builder, then prompts. Doc Consolidator is secondary — paste notes to draft a Hub guide. Everything runs locally; AI assist is optional. Not hosted chat, and not a place to enter API keys.
           </p>
           <div className="mt-4 flex flex-wrap gap-2" aria-label="Workbench honesty">
             <span className="honesty-pill">Runs in your browser</span>
@@ -43,25 +45,28 @@ const Tools = () => {
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8">
         <Tabs defaultValue={defaultTab} className="w-full">
           <TabsList className="w-full justify-start bg-secondary border border-border rounded-lg p-1 mb-8 overflow-x-auto">
-            <TabsTrigger value="consolidator" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
-              Doc Consolidator
-            </TabsTrigger>
             <TabsTrigger value="character" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
-              Character Builder
+              Character Card Builder
             </TabsTrigger>
             <TabsTrigger value="prompts" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
               Prompt Builder
             </TabsTrigger>
+            <TabsTrigger value="consolidator" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
+              Doc Consolidator
+            </TabsTrigger>
           </TabsList>
+          <p className="mb-6 -mt-4 text-xs text-muted-foreground">
+            Secondary: Doc Consolidator builds a Hub guide from pasted notes (AI optional).
+          </p>
 
-          <TabsContent value="consolidator">
-            <DocConsolidator />
-          </TabsContent>
           <TabsContent value="character">
             <CharacterCardBuilder />
           </TabsContent>
           <TabsContent value="prompts">
             <PromptBuilder />
+          </TabsContent>
+          <TabsContent value="consolidator">
+            <DocConsolidator />
           </TabsContent>
         </Tabs>
       </main>

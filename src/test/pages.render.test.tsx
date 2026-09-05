@@ -182,7 +182,8 @@ describe("Tools", () => {
     expect(screen.getByRole("heading", { name: "Local workbench" })).toBeInTheDocument();
     expect(screen.getByText("No credential collection")).toBeInTheDocument();
 
-    // Character Card Builder is the default selected tool
+    // Character Card Builder is the default selected tool; Lorebook is a first-class tab
+    expect(screen.getByRole("tab", { name: /Lorebook Builder/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Character Card Builder/i })).toHaveAttribute("data-state", "active");
     expect(screen.getByText("Alternate Greetings")).toBeInTheDocument();
     expect(screen.getByText("Add alternate greeting")).toBeInTheDocument();
@@ -190,6 +191,11 @@ describe("Tools", () => {
     // Doc Consolidator is not the default panel
     expect(screen.queryByText("Documentation Consolidator")).not.toBeInTheDocument();
     expect(screen.queryByText(/AI backend unavailable/i)).not.toBeInTheDocument();
+
+    // Lorebook Builder is reachable without leaving Workbench
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Lorebook Builder/i }));
+    expect(screen.getByRole("heading", { name: /Lorebook \/ World Info Builder/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Lorebook name/i)).toBeInTheDocument();
 
     // Prompt Builder tab exposes lean library (no filter-override / unrestricted templates)
     // (Radix Tabs activates on mouseDown)

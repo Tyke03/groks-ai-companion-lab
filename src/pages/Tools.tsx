@@ -1,12 +1,13 @@
 import { Layout } from "@/components/Layout";
-import { Wrench, BookOpen, UserRound, Network } from "lucide-react";
+import { Wrench, UserRound, Network } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocConsolidator } from "@/components/tools/DocConsolidator";
 import { CharacterCardBuilder } from "@/components/tools/CharacterCardBuilder";
 import { PromptBuilder } from "@/components/tools/PromptBuilder";
+import LorebookBuilder from "@/components/tools/LorebookBuilder";
 
-const TAB_VALUES = new Set(["character", "prompts", "consolidator"]);
+const TAB_VALUES = new Set(["character", "lorebook", "prompts", "consolidator"]);
 
 const Tools = () => {
   const [searchParams] = useSearchParams();
@@ -27,7 +28,7 @@ const Tools = () => {
             Local workbench
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Start with Character Card Builder, then prompts. Doc Consolidator is secondary — paste notes to draft a Hub guide. Everything runs locally; AI assist is optional. Not hosted chat, and not a place to enter API keys.
+            Start with Character Card Builder, then Lorebook or prompts. Doc Consolidator is secondary — paste notes to draft a Hub guide. Everything runs locally; AI assist is optional. Not hosted chat, and not a place to enter API keys.
           </p>
           <div className="mt-4 flex flex-wrap gap-2" aria-label="Workbench honesty">
             <span className="honesty-pill">Runs in your browser</span>
@@ -35,7 +36,6 @@ const Tools = () => {
             <span className="honesty-pill">Offline drafts work without AI</span>
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
-            <Link to="/tools/lorebook-builder" className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary"><BookOpen className="h-4 w-4" /> Lorebook Builder</Link>
             <Link to="/tools/persona-builder" className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary"><UserRound className="h-4 w-4" /> Persona Builder</Link>
             <Link to="/tools/api-tester" className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary"><Network className="h-4 w-4" /> API Tester</Link>
           </div>
@@ -48,6 +48,9 @@ const Tools = () => {
             <TabsTrigger value="character" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
               Character Card Builder
             </TabsTrigger>
+            <TabsTrigger value="lorebook" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
+              Lorebook Builder
+            </TabsTrigger>
             <TabsTrigger value="prompts" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
               Prompt Builder
             </TabsTrigger>
@@ -56,11 +59,14 @@ const Tools = () => {
             </TabsTrigger>
           </TabsList>
           <p className="mb-6 -mt-4 text-xs text-muted-foreground">
-            Secondary: Doc Consolidator builds a Hub guide from pasted notes (AI optional).
+            Character Card Builder is the default tool. Lorebook Builder is a first-class tab. Secondary: Doc Consolidator builds a Hub guide from pasted notes (AI optional).
           </p>
 
           <TabsContent value="character">
             <CharacterCardBuilder />
+          </TabsContent>
+          <TabsContent value="lorebook">
+            <LorebookBuilder />
           </TabsContent>
           <TabsContent value="prompts">
             <PromptBuilder />

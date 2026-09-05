@@ -175,3 +175,5 @@ This experiment:
 
 - **2026-09-03** - Batch 1 landed on this branch.
 
+- **2026-09-04** - SillyTavern guide evidence-aligned to EP-sillytavern-2026-09-04 (Node 20+, AGPL/UI-only, official install docs; stripped marketing/NSFW overclaims).
+

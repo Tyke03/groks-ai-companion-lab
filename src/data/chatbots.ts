@@ -65,13 +65,13 @@ export interface Chatbot {
 export const chatbots: Chatbot[] = [
   // ============ Local Frontends ============
   {
-    name: "SillyTavern", slug: "sillytavern", type: "Local UI + Cloud", nsfwPolicy: "Full uncensored", contentLevel: 5,
+    name: "SillyTavern", slug: "sillytavern", type: "Local UI + Cloud", nsfwPolicy: "Backend-dependent", contentLevel: 5,
     hasExplicitChat: true, hasVoice: true,
-    description: "Extensive local frontend with multi-API support, character cards, lorebooks, and expression images.",
+    description: "AGPL-3.0 local UI frontend (needs external LLM backend) with multi-API support, character cards, lorebooks, and expression images.",
     category: "local", url: "https://sillytavern.app", docsAvailable: true,
-    model: "Bring-your-own (OpenAI, Claude, local, etc.)", pricing: "Free (open source)", contextWindow: "Depends on backend",
-    apiAccess: "open", memory: "Lorebooks, summaries, author's notes, chat history", knownIssues: "Requires setup; no built-in model",
-    cardFormat: "V1/V2/V3 PNG + JSON", lastVerified: "2026-08",
+    model: "Bring-your-own (OpenAI, Claude, local, etc.)", pricing: "Free (AGPL-3.0)", contextWindow: "Depends on backend",
+    apiAccess: "open", memory: "Lorebooks, summaries, author's notes, chat history", knownIssues: "Requires setup; no built-in model — UI only",
+    cardFormat: "V1/V2/V3 PNG + JSON", lastVerified: "2026-09-04",
   },
   {
     name: "TavernAI", slug: "tavernai", type: "Local UI", nsfwPolicy: "Uncensored", contentLevel: 5,

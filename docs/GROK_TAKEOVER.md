@@ -266,3 +266,10 @@ Landed on `grok/takeover-audit-and-first-batch` after the audit commit:
 ## Product direction Batch 1 (2026-09-03)
 
 Batch 1 presentation/nav/IA landed. No platform records deleted; no push.
+
+### 2026-09-04 — SillyTavern guide evidence alignment
+
+- Aligned `platformDocs.sillytavern` with Evidence Pack EP-sillytavern-2026-09-04: Node.js 20+, AGPL-3.0 / UI-only framing, official install docs + `release` branch, stripped ranking/marketing and invented NSFW model recommendations, removed AICharacterCards.com from ST community list.
+- Directory record for SillyTavern only: tightened overclaim fields (`nsfwPolicy`, description, pricing, knownIssues, lastVerified).
+- Updated docs page reviewed-date assertion to 2026-09-04.
+

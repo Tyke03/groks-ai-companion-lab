@@ -146,7 +146,7 @@ describe("Documentation", () => {
     // TOC link + section heading share the same label
     expect(screen.getAllByText("Quick Facts").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Setup Guide").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Guide reviewed 2026-08/)).toBeInTheDocument();
+    expect(screen.getByText(/Guide reviewed 2026-09-04/)).toBeInTheDocument();
     expect(screen.getByText("Open key")).toBeInTheDocument(); // API access quick fact
   });
 

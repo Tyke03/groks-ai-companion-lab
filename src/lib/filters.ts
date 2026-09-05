@@ -80,7 +80,7 @@ export const cardLabels: Record<CardSpec, string> = {
 export const contentLabels: Record<ContentFilter, string> = {
   all: "All levels",
   sfw: "SFW only",
-  unfiltered: "Unfiltered / NSFW",
+  unfiltered: "Moderate+ / NSFW",  // Compare: level 3=Moderate .. 5=Fully uncensored
   toggleable: "Toggleable",
 };
 

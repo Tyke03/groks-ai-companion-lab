@@ -88,14 +88,49 @@ export function parseEntry(raw: unknown): LorebookEntry | null {
   };
 }
 
+export type LorebookImportShape = "top-level" | "sillytavern-data" | "unknown";
+
+/**
+ * Detect where entries live. SillyTavern often nests World Info under `data.entries`
+ * (object map or array). Top-level `entries` stays the primary shape.
+ */
+export function detectLorebookImportShape(parsed: unknown): LorebookImportShape {
+  if (!isRecord(parsed)) return "unknown";
+  if (parsed.entries !== undefined) return "top-level";
+  if (isRecord(parsed.data) && parsed.data.entries !== undefined) return "sillytavern-data";
+  return "unknown";
+}
+
+/** Flatten nested ST `data.entries` (and similar) into a root that has `.entries`. */
+export function normalizeLorebookImportRoot(parsed: unknown): Record<string, unknown> {
+  if (!isRecord(parsed)) throw new Error("No entries array found");
+  const shape = detectLorebookImportShape(parsed);
+  if (shape === "top-level") return parsed;
+  if (shape === "sillytavern-data") {
+    const data = parsed.data as Record<string, unknown>;
+    return {
+      ...parsed,
+      ...data,
+      entries: data.entries,
+    };
+  }
+  throw new Error(
+    "No entries array found. Expected top-level entries or SillyTavern-style data.entries.",
+  );
+}
+
 /** Normalize SillyTavern World Info v2 or Agnaistic-style JSON into entries. */
 export function parseImportedEntries(parsed: unknown): LorebookEntry[] {
-  if (!isRecord(parsed)) throw new Error("No entries array found");
+  const root = normalizeLorebookImportRoot(parsed);
   const rawEntries =
-    parsed.entries && !Array.isArray(parsed.entries)
-      ? Object.values(parsed.entries as Record<string, unknown>)
-      : parsed.entries;
-  if (!Array.isArray(rawEntries)) throw new Error("No entries array found");
+    root.entries && !Array.isArray(root.entries)
+      ? Object.values(root.entries as Record<string, unknown>)
+      : root.entries;
+  if (!Array.isArray(rawEntries)) {
+    throw new Error(
+      "No entries array found. Expected top-level entries or SillyTavern-style data.entries.",
+    );
+  }
   return rawEntries
     .map(parseEntry)
     .filter((entry): entry is LorebookEntry => entry !== null)
@@ -105,6 +140,9 @@ export function parseImportedEntries(parsed: unknown): LorebookEntry[] {
 export function extractImportedName(parsed: unknown): string | null {
   if (!isRecord(parsed)) return null;
   if (typeof parsed.name === "string" && parsed.name.trim()) return parsed.name.trim();
+  if (isRecord(parsed.data) && typeof parsed.data.name === "string" && parsed.data.name.trim()) {
+    return parsed.data.name.trim();
+  }
   return null;
 }
 

@@ -63,20 +63,20 @@ describe("Directory filter controls", () => {
     renderPage();
     expect(screen.getByRole("radio", { name: /All \(\d+\)/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "SFW only" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Toggleable" })).toBeInTheDocument();
   });
 
   it("content single-select is mutually exclusive", () => {
     renderPage();
     const sfw = screen.getByRole("radio", { name: "SFW only" });
-    const unfiltered = screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ });
+    const unfiltered = screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ });
     fireEvent.click(sfw);
     expect(screen.getByRole("radio", { name: "SFW only" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ })).toHaveAttribute("aria-checked", "false");
     fireEvent.click(unfiltered);
     expect(screen.getByRole("radio", { name: "SFW only" })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ })).toHaveAttribute("aria-checked", "true");
   });
 
   it("features are multi-select toggles", () => {

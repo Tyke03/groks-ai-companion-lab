@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -12,15 +13,37 @@ import {
   buildOfflineGuideSkeleton,
   interpretConsolidateResponse,
 } from "@/lib/docConsolidator";
+import {
+  buildBridgeSummary,
+  stashWorkbenchBridge,
+  toolsTabPath,
+} from "@/lib/workbenchBridges";
 
 const MAX_CHARS = 32000;
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-const withTimeout = <T,>(promise: Promise<T>, milliseconds = 15000) =>
+const FETCH_TIMEOUT_MS = 15000;
+const AI_TIMEOUT_MS = 45000;
+
+const withTimeout = <T,>(
+  promise: Promise<T>,
+  milliseconds: number,
+  label = "Request",
+) =>
   Promise.race([
     promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Request timed out after 15 seconds.")), milliseconds)),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `${label} timed out after ${Math.round(milliseconds / 1000)} seconds.`,
+            ),
+          ),
+        milliseconds,
+      ),
+    ),
   ]);
 
 const coachFetchError = (raw: string): string => {
@@ -57,6 +80,7 @@ export const DocConsolidator = () => {
   const [fetching, setFetching] = useState(false);
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
+  const navigate = useNavigate();
   const ai = useAiBackendStatus();
   const aiUnavailable = ai.status === "unavailable";
   const aiReady = ai.status === "available";
@@ -79,11 +103,15 @@ export const DocConsolidator = () => {
 
     setFetching(true);
     try {
-      const response = await withTimeout(fetch("/api/fetch-doc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: docUrl.trim() }),
-      }));
+      const response = await withTimeout(
+        fetch("/api/fetch-doc", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: docUrl.trim() }),
+        }),
+        FETCH_TIMEOUT_MS,
+        "Fetch",
+      );
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || `Fetch failed (${response.status})`);
       if (data?.text) {
@@ -141,13 +169,17 @@ export const DocConsolidator = () => {
     setAiErrorBanner("");
 
     try {
-      const { data, error } = await withTimeout(supabase.functions.invoke("venice-ai", {
-        body: {
-          action: "consolidate",
-          serviceName: effectiveName,
-          text: inputText,
-        },
-      }));
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke("venice-ai", {
+          body: {
+            action: "consolidate",
+            serviceName: effectiveName,
+            text: inputText,
+          },
+        }),
+        AI_TIMEOUT_MS,
+        "AI consolidate",
+      );
 
       const outcome = interpretConsolidateResponse(data, error);
       if (!outcome.ok) {
@@ -189,6 +221,20 @@ export const DocConsolidator = () => {
     URL.revokeObjectURL(url);
     toast({ title: "Downloaded", description: `Saved as ${effectiveName || "documentation"}_guide.md` });
   };
+
+  const handoffToWorkbench = (target: "character" | "prompts") => {
+    const summary = buildBridgeSummary(effectiveName || "Service", result);
+    stashWorkbenchBridge({ target, serviceName: effectiveName || "Service", summary });
+    navigate(toolsTabPath(target));
+    toast({
+      title: target === "character" ? "Opening Character Card" : "Opening Prompt Builder",
+      description:
+        target === "character"
+          ? "Service name and a short handoff note will be added to Creator Notes on the active card."
+          : "A short handoff note will be placed in Raw context for editing.",
+    });
+  };
+
 
   const handleSave = () => {
     if (!result || !effectiveName) return;
@@ -402,6 +448,30 @@ export const DocConsolidator = () => {
               </Button>
             </div>
           </div>
+                    <div className="flex flex-wrap gap-2" data-testid="doc-workbench-bridges">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => handoffToWorkbench("character")}
+              data-testid="use-in-character-card"
+            >
+              Use in Character Card
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => handoffToWorkbench("prompts")}
+              data-testid="use-in-prompt-builder"
+            >
+              Use in Prompt Builder
+            </Button>
+            <p className="w-full text-xs text-muted-foreground">
+              Light handoff only: copies the service name and a short preview note — not a full project sync.
+            </p>
+          </div>
+
           <pre tabIndex={0} aria-label="Consolidated documentation result" className="rounded-lg border border-border bg-secondary/50 p-4 text-sm text-muted-foreground overflow-auto max-h-[500px] whitespace-pre-wrap font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {result}
           </pre>

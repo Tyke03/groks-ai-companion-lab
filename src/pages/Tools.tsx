@@ -10,9 +10,16 @@ import LorebookBuilder from "@/components/tools/LorebookBuilder";
 const TAB_VALUES = new Set(["character", "lorebook", "prompts", "consolidator"]);
 
 const Tools = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("tab") ?? "";
-  const defaultTab = TAB_VALUES.has(requested) ? requested : "character";
+  const activeTab = TAB_VALUES.has(requested) ? requested : "character";
+
+  const setTab = (value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (TAB_VALUES.has(value)) next.set("tab", value);
+    else next.delete("tab");
+    setSearchParams(next, { replace: true });
+  };
 
   return (
     <Layout>
@@ -43,7 +50,7 @@ const Tools = () => {
       </header>
 
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8">
-        <Tabs defaultValue={defaultTab} className="w-full">
+        <Tabs value={activeTab} onValueChange={setTab} className="w-full">
           <TabsList className="w-full justify-start bg-secondary border border-border rounded-lg p-1 mb-8 overflow-x-auto">
             <TabsTrigger value="character" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-4 py-2 text-sm font-medium">
               Character Card Builder

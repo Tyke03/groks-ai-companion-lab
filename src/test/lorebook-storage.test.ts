@@ -12,6 +12,7 @@ import {
   emptyEntry,
   loadLorebook,
   mergeEntries,
+  detectLorebookImportShape,
   parseImportedEntries,
   replaceEntries,
   saveLorebook,
@@ -123,5 +124,31 @@ describe("lorebook bind survives reload", () => {
     book = toggleBoundCard(book, "card-maya");
     saveLorebook(book);
     expect(loadLorebook().boundCardIds).toEqual(["card-riley"]);
+  });
+});
+
+describe("sillytavern nested data.entries import", () => {
+  it("accepts ST-style data.entries object map and fresh ids", () => {
+    const nested = {
+      data: {
+        name: "ST Nested World",
+        entries: {
+          "0": { key: ["harbor"], content: "Neon docks", order: 10, constant: false },
+          "1": { keys: ["tower"], content: "Signal tower", insertion_order: 20 },
+        },
+      },
+    };
+    expect(detectLorebookImportShape(nested)).toBe("sillytavern-data");
+    const imported = parseImportedEntries(nested);
+    expect(imported).toHaveLength(2);
+    expect(imported.some((e) => e.keys.includes("harbor") && e.content.includes("Neon"))).toBe(true);
+    expect(imported.some((e) => e.keys.includes("tower"))).toBe(true);
+    expect(imported.every((e) => typeof e.id === "string" && e.id.length > 0)).toBe(true);
+  });
+
+  it("still accepts top-level entries array", () => {
+    const top = { name: "Top", entries: [{ keys: ["a"], content: "A" }] };
+    expect(detectLorebookImportShape(top)).toBe("top-level");
+    expect(parseImportedEntries(top)).toHaveLength(1);
   });
 });

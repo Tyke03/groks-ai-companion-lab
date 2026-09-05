@@ -49,7 +49,7 @@ describe("content filter semantics", () => {
     expect(matchesContent(bySlug("janitor-ai"), "sfw")).toBe(false);
   });
 
-  it("Unfiltered / NSFW matches contentLevel >= 3", () => {
+  it("Moderate+ / NSFW matches contentLevel >= 3", () => {
     expect(matchesContent(bySlug("janitor-ai"), "unfiltered")).toBe(true); // level 3
     expect(matchesContent(bySlug("sillytavern"), "unfiltered")).toBe(true); // level 5
     expect(matchesContent(bySlug("pephop-ai"), "unfiltered")).toBe(false); // level 2 excluded

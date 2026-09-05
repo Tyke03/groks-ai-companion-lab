@@ -1,9 +1,10 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers } from "lucide-react";
+import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers, Link2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { embedCardInPng, extractCardFromPng } from "@/lib/pngChunk";
@@ -43,6 +44,8 @@ import {
   type SpecVersion,
 } from "@/lib/cardStorage";
 import { estimateCardTokens } from "@/lib/cardTokens";
+import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBridges";
+import { loadLorebook } from "@/lib/lorebookStorage";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import {
   AlertDialog,
@@ -195,6 +198,23 @@ export const CharacterCardBuilder = () => {
   const { toast } = useToast();
   const ai = useAiBackendStatus();
   const aiUnavailable = ai.status === "unavailable";
+
+  // Light Doc Consolidator handoff — append short note once, then clear stash.
+  useEffect(() => {
+    const payload = consumeWorkbenchBridge("character");
+    if (!payload) return;
+    setCard((prev) => {
+      const nextNotes = appendBridgeToNotes(prev.creator_notes, payload.summary);
+      if (nextNotes === prev.creator_notes) return prev;
+      return { ...prev, creator_notes: nextNotes };
+    });
+    toast({
+      title: "Doc Consolidator handoff",
+      description: `Added a short note for ${payload.serviceName} to Creator Notes.`,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   // Persist the active slot whenever editor state changes (multi-card safe).
   useEffect(() => {
@@ -616,6 +636,22 @@ export const CharacterCardBuilder = () => {
             <Layers className="h-4 w-4 text-primary" />
             <p className="text-sm font-medium text-foreground">Local cards</p>
             <span className="text-xs text-muted-foreground">Saved in this browser only</span>
+            {(() => {
+              const lore = loadLorebook();
+              const bound = lore.boundCardIds.includes(library.activeId);
+              if (!bound) return null;
+              return (
+                <Link
+                  to="/tools?tab=lorebook"
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                  data-testid="bound-lorebook-link"
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Open bound lorebook{lore.name ? `: ${lore.name}` : ""}
+                </Link>
+              );
+            })()}
+
           </div>
           <Button variant="outline" size="sm" onClick={handleNewCard} data-testid="new-card-button">
             <Plus className="h-4 w-4" /> New card
@@ -926,6 +962,12 @@ export const CharacterCardBuilder = () => {
       </div>
 
       {/* Export actions */}
+      <p className="text-xs text-muted-foreground" data-testid="export-platform-hint">
+        This workbench exports Character Card V2/V3 JSON and optional PNG embedding for frontends that import those files.
+        Hosted platforms often use their own upload UI and may not accept these formats — check that platform's docs.
+        We do not call hosted platform APIs from here.
+      </p>
+
       <div className="space-y-2">
         <div className="flex flex-wrap gap-3">
           <Button onClick={() => requestExport("copy")} data-testid="copy-json-button">

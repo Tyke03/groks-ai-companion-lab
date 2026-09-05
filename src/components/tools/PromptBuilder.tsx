@@ -14,6 +14,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
+import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 
 const customKey = "ai-companion-hub-custom-prompts";
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -57,6 +58,24 @@ export const PromptBuilder = () => {
       setCustomTemplates([]);
     }
   }, []);
+
+  useEffect(() => {
+    const payload = consumeWorkbenchBridge("prompts");
+    if (!payload) return;
+    setShowRawContext(true);
+    setRawContext((prev) => {
+      const block = payload.summary;
+      if (!prev.trim()) return block;
+      if (prev.includes(block)) return prev;
+      return `${prev.trim()}\n\n${block}`;
+    });
+    toast({
+      title: "Doc Consolidator handoff",
+      description: `Placed a short note for ${payload.serviceName} in Raw context.`,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   useEffect(() => {
     const requestedId = searchParams.get("template");

@@ -13,6 +13,7 @@ import {
   loadLorebook,
   lorebookHasContent,
   mergeEntries,
+  detectLorebookImportShape,
   parseImportedEntries,
   replaceEntries,
   saveLorebook,
@@ -190,8 +191,15 @@ const LorebookBuilder = () => {
   const beginImport = () => {
     try {
       const parsed = JSON.parse(importText);
+      const shape = detectLorebookImportShape(parsed);
       const imported = parseImportedEntries(parsed);
       const importedName = extractImportedName(parsed);
+      if (shape === "sillytavern-data") {
+        toast({
+          title: "Normalized SillyTavern import",
+          description: "Found entries under data.entries and flattened them for this workbench.",
+        });
+      }
       if (lorebookHasContent(book) && imported.length > 0) {
         setPendingImport({ entries: imported, importedName });
         return;

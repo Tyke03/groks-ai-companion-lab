@@ -108,6 +108,8 @@ const Compare = () => {
 
   const hasFilters = search.trim() !== "" || category !== "";
   const clearFilters = useCallback(() => { setSearch(""); setCategory(""); }, []);
+  const clearSelection = useCallback(() => { setSelectedSlugs(new Set()); }, []);
+  const clearAll = useCallback(() => { clearFilters(); clearSelection(); }, [clearFilters, clearSelection]);
 
   /* ── URL sync ────────────────────────────────────────────────────────── */
   // Keep URL params in sync for shareability
@@ -244,7 +246,7 @@ const Compare = () => {
 
           {/* Selected chips */}
           {selected.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap items-center gap-2">
               {selected.map((bot) => (
                 <span
                   key={bot.slug}
@@ -261,6 +263,24 @@ const Compare = () => {
                   </button>
                 </span>
               ))}
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 h-7 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Clear selected platforms"
+                data-testid="compare-clear-selection"
+              >
+                <RotateCcw className="h-3 w-3" /> Clear selection
+              </button>
+              <button
+                type="button"
+                onClick={clearAll}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 h-7 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Clear filters and selected platforms"
+                data-testid="compare-clear-all"
+              >
+                Clear all
+              </button>
             </div>
           )}
         </section>

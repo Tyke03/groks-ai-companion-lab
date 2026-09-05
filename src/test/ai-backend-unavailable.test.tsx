@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { DocConsolidator } from "@/components/tools/DocConsolidator";
 
 // Supabase is configured, but the edge function reports that no provider API
@@ -25,7 +26,7 @@ afterEach(() => {
 
 describe("AI backend reports unhealthy", () => {
   it("shows the unavailable banner and explains why", async () => {
-    render(<DocConsolidator />);
+    render(<MemoryRouter><DocConsolidator /></MemoryRouter>);
     expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
     expect(await screen.findByText(/Mode: Offline only \(AI unavailable\)/i)).toBeInTheDocument();
     expect(screen.getByText(/No provider API key is configured/i)).toBeInTheDocument();

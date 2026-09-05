@@ -24,13 +24,13 @@ const Tools = () => {
             Local workbench
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Draft character cards, prompts, and consolidated docs on your machine.
-            This is a local experiment surface — not hosted chat, and not a place to enter API keys.
+            Draft character cards and prompts locally, then paste into SillyTavern or your host.
+            Doc Consolidator is paste/fetch-first — AI consolidate is optional. Not hosted chat, and not a place to enter API keys.
           </p>
           <div className="mt-4 flex flex-wrap gap-2" aria-label="Workbench honesty">
             <span className="honesty-pill">Runs in your browser</span>
             <span className="honesty-pill">No credential collection</span>
-            <span className="honesty-pill">Optional AI assist only if configured</span>
+            <span className="honesty-pill">Offline drafts work without AI</span>
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
             <Link to="/tools/lorebook-builder" className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary"><BookOpen className="h-4 w-4" /> Lorebook Builder</Link>

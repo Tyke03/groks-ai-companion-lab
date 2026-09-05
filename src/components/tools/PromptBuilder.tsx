@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Copy, Check, Sparkles, Upload, Loader2, Wand2, WifiOff } from "lucide-react";
+import { Copy, Check, Sparkles, Upload, Loader2, Wand2, WifiOff, ListChecks } from "lucide-react";
 import {
   getPrimaryCompatibility,
   normalizeLocalTemplates,
@@ -36,6 +36,19 @@ export const PromptBuilder = () => {
   const allTemplates = useMemo(() => [...promptTemplates, ...customTemplates], [customTemplates]);
   const compatibility = getPrimaryCompatibility(selectedTemplate);
 
+  const templatesByCategory = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, PromptTemplate[]>();
+    for (const template of allTemplates) {
+      if (!map.has(template.category)) {
+        map.set(template.category, []);
+        order.push(template.category);
+      }
+      map.get(template.category)!.push(template);
+    }
+    return order.map((category) => ({ category, templates: map.get(category)! }));
+  }, [allTemplates]);
+
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(customKey) || "[]");
@@ -65,6 +78,19 @@ export const PromptBuilder = () => {
   const hasUnresolvedPlaceholders = selectedTemplate.variables.some(
     (variable) => !variables[variable.name]?.trim() && !variable.placeholder.trim(),
   );
+
+  const handleFillExamples = () => {
+    const next: Record<string, string> = {};
+    for (const variable of selectedTemplate.variables) {
+      if (variable.placeholder.trim()) next[variable.name] = variable.placeholder;
+    }
+    setVariables(next);
+    setCopied(false);
+    toast({
+      title: "Example values filled",
+      description: "Local placeholders only — no AI. Edit before copying into SillyTavern or your host.",
+    });
+  };
 
   const handleCopy = async () => {
     if (hasUnresolvedPlaceholders) return;
@@ -150,6 +176,9 @@ export const PromptBuilder = () => {
         setting: ["scenario"],
         personality_traits: ["personality"],
         speaking_style: ["personality"],
+        personality: ["personality"],
+        description: ["description"],
+        scenario: ["scenario"],
         scenario_title: ["scenario"],
         setting_description: ["scenario"],
         context: ["scenario", "description"],
@@ -157,7 +186,7 @@ export const PromptBuilder = () => {
         greeting_dialogue: ["first_mes"],
         scene_description: ["scenario"],
         entry_name: ["name"],
-        description: ["description"],
+        example_dialogue: ["mes_example", "example_dialogue"],
       };
 
       const newVars: Record<string, string> = {};
@@ -191,7 +220,7 @@ export const PromptBuilder = () => {
       <div>
         <h2 className="mb-2 font-display text-xl font-semibold text-foreground">Prompt Builder</h2>
         <p className="text-sm text-muted-foreground">
-          Fill author fields to create roleplay system prompts, scenarios, style guides, and lorebook drafts. Verified runtime macros are preserved literally for their target platform.
+          Draft locally, then paste into SillyTavern or your host. Fill example values works offline; AI generate is optional.
         </p>
       </div>
 
@@ -205,28 +234,39 @@ export const PromptBuilder = () => {
           <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
           <div className="text-sm">
             <p className="font-medium text-amber-300">AI backend unavailable</p>
-            <p className="text-muted-foreground">Manual template filling, character-card population, and copying still work. AI generation is disabled until the backend is reachable again.</p>
+            <p className="text-muted-foreground">Fill example values, edit fields, populate from card JSON, and copy — all work offline. AI generation stays disabled.</p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
         </div>
       )}
 
-      <div>
-        <span id="prompt-template-label" className="mb-2 block text-sm font-medium text-foreground">Select Template</span>
-        <div role="group" aria-labelledby="prompt-template-label" className="flex flex-wrap gap-2">
-          {allTemplates.map((template) => (
-            <button
-              key={template.id}
-              type="button"
-              onClick={() => handleSelectTemplate(template)}
-              aria-pressed={selectedTemplate.id === template.id}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selectedTemplate.id === template.id ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground hover:text-foreground"}`}
-            >
-              {template.name}{template.userCreated ? " · Local" : ""}
-            </button>
-          ))}
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">{selectedTemplate.description}</p>
+      <div className="space-y-4">
+        <span id="prompt-template-label" className="block text-sm font-medium text-foreground">Select Template</span>
+        {templatesByCategory.map((group) => (
+          <div key={group.category}>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.category}</p>
+            <div role="group" aria-labelledby="prompt-template-label" className="flex flex-wrap gap-2">
+              {group.templates.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => handleSelectTemplate(template)}
+                  aria-pressed={selectedTemplate.id === template.id}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selectedTemplate.id === template.id ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground hover:text-foreground"}`}
+                >
+                  {template.name}{template.userCreated ? " · Local" : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        <p className="text-xs text-muted-foreground">{selectedTemplate.description}</p>
+        {selectedTemplate.useWhen && (
+          <p className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Use when: </span>
+            {selectedTemplate.useWhen}
+          </p>
+        )}
       </div>
 
       <div className="rounded-lg border border-border bg-secondary/20 p-4">
@@ -245,6 +285,9 @@ export const PromptBuilder = () => {
       </div>
 
       <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={handleFillExamples} disabled={selectedTemplate.variables.length === 0}>
+          <ListChecks className="h-4 w-4" /> Fill example values
+        </Button>
         <Button variant="outline" size="sm" aria-expanded={showImport} aria-controls="prompt-import-panel" onClick={() => setShowImport(!showImport)}><Upload className="h-4 w-4" /> Populate from Card / JSON</Button>
         <Button variant="outline" size="sm" aria-expanded={showRawContext} aria-controls="prompt-raw-context-panel" onClick={() => setShowRawContext(!showRawContext)}><Wand2 className="h-4 w-4" /> Paste Raw Text as Context</Button>
       </div>
@@ -266,20 +309,20 @@ export const PromptBuilder = () => {
       )}
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="text-sm font-medium text-foreground">Author fields</h3>
           <div className="flex items-center gap-2">
             {rawContext.trim() && <span className="inline-flex items-center gap-1 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600"><Check className="h-3 w-3" /> Context active</span>}
             <Button variant="outline" size="sm" onClick={handleGenerateAll} disabled={generatingAll || generatingVar !== null || aiUnavailable}>
               {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {generatingAll ? "Generating..." : "Generate All"}
+              {generatingAll ? "Generating..." : "AI Generate all"}
             </Button>
           </div>
         </div>
         {selectedTemplate.variables.length === 0 && <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">This template has no author fields. Any verified runtime macros remain literal in the output.</p>}
         {selectedTemplate.variables.map((variable) => (
           <div key={variable.name}>
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex items-center justify-between gap-2">
               <label htmlFor={`template-variable-${variable.name}`} className="text-xs text-muted-foreground">
                 {variable.label} <code className="ml-1 rounded bg-secondary px-1 text-primary">{variable.token}</code> — {variable.description}
               </label>
@@ -294,9 +337,15 @@ export const PromptBuilder = () => {
       </div>
 
       <div>
-        <div className="mb-2 flex items-center justify-between">
-          <div><h3 className="font-display font-semibold text-foreground">Generated Prompt</h3>{hasUnresolvedPlaceholders && <p className="text-xs text-amber-300">Fill the fields without examples before copying.</p>}</div>
-          <Button variant="outline" size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? "Copied" : "Copy filled output"}</Button>
+        <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h3 className="font-display font-semibold text-foreground">Generated Prompt</h3>
+            {hasUnresolvedPlaceholders && <p className="text-xs text-amber-300">Fill the fields without examples before copying — or use Fill example values.</p>}
+          </div>
+          <Button size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? "Copied" : "Copy filled output"}
+          </Button>
         </div>
         <pre tabIndex={0} aria-label="Generated prompt output" className="max-h-[400px] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/50 p-4 font-mono text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{getRenderedPrompt()}</pre>
       </div>

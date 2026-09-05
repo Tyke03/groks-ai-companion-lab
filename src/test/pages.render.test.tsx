@@ -181,7 +181,8 @@ describe("Tools", () => {
     expect(screen.getByRole("heading", { name: "Local workbench" })).toBeInTheDocument();
     expect(screen.getByText("No credential collection")).toBeInTheDocument();
     expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
-    expect(screen.getByText("Fetch Documentation from URL")).toBeInTheDocument();
+    expect(screen.getByText("Optional: Fetch from URL")).toBeInTheDocument();
+    expect(screen.getByText("Paste Documentation")).toBeInTheDocument();
     // No AI-unavailable banner when backend is healthy
     expect(screen.queryByText(/AI backend unavailable/i)).not.toBeInTheDocument();
 
@@ -192,11 +193,12 @@ describe("Tools", () => {
     expect(screen.getByText("Add alternate greeting")).toBeInTheDocument();
     expect(screen.getByText("Character Version")).toBeInTheDocument();
 
-    // Prompt Builder tab exposes renamed templates (no "Jailbreak" label)
+    // Prompt Builder tab exposes lean library (no filter-override / unrestricted templates)
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Prompt Builder/i }));
-    expect(screen.getByText("Filter Override — Basic")).toBeInTheDocument();
-    expect(screen.getByText("Unrestricted Mode — Advanced")).toBeInTheDocument();
-    expect(screen.queryByText(/Jailbreak/i)).not.toBeInTheDocument();
+    expect(screen.getByText("System — Jailbreak-neutral RP")).toBeInTheDocument();
+    expect(screen.getByText("SillyTavern — Author's Note Preset")).toBeInTheDocument();
+    expect(screen.queryByText("Filter Override — Basic")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unrestricted Mode — Advanced")).not.toBeInTheDocument();
   });
 });
 

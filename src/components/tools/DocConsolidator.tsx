@@ -1,15 +1,26 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { chatbots } from "@/data/chatbots";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { chatbots, type Category } from "@/data/chatbots";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
-import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2 } from "lucide-react";
+import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const MAX_CHARS = 32000;
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  local: "Local frontends",
+  hosted: "Hosted platforms",
+  libraries: "Card libraries",
+  companion: "Companions",
+  providers: "Model providers",
+  hybrid: "Hybrid",
+};
+
+const CATEGORY_ORDER: Category[] = ["local", "hosted", "libraries", "companion", "providers", "hybrid"];
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -19,11 +30,77 @@ const withTimeout = <T,>(promise: Promise<T>, milliseconds = 15000) =>
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Request timed out after 15 seconds.")), milliseconds)),
   ]);
 
+const coachFetchError = (raw: string): string => {
+  const message = raw || "Could not fetch the URL.";
+  const lower = message.toLowerCase();
+  if (lower.includes("timed out") || lower.includes("timeout") || lower.includes("longer than")) {
+    return `${message} Tip: the source was too slow — paste the page text manually instead.`;
+  }
+  if (lower.includes("http ") || /returned http \d+/i.test(message) || /\b(401|403|404|429|500|502|503)\b/.test(message)) {
+    return `${message} Tip: HTTP errors often mean a missing page, rate limit, or login wall — open the docs in your browser and paste the text.`;
+  }
+  if (lower.includes("login") || lower.includes("auth") || lower.includes("cookie") || lower.includes("forbidden")) {
+    return `${message} Tip: pages behind login walls cannot be fetched here — paste manually after signing in.`;
+  }
+  if (lower.includes("html") || lower.includes("non-html") || lower.includes("content-type")) {
+    return `${message} Tip: this URL did not look like readable HTML/text — paste the documentation manually.`;
+  }
+  if (lower.includes("empty") || lower.includes("no readable")) {
+    return `${message} Tip: nothing useful was extracted (common with heavy JavaScript pages) — paste the text yourself.`;
+  }
+  return `${message} Tip: if fetch keeps failing, paste the documentation text into the box below.`;
+};
+
+const offlineGuideSkeleton = (service: string) => {
+  const title = service.trim() || "Service";
+  return `# ${title} — local guide skeleton
+
+> Drafted offline in AI Companion Hub. Fill each section from official docs or your own notes. AI consolidation is optional.
+
+## Overview
+- What this product is:
+- Who it is for:
+- Honest limits (UI-only? needs a backend? account required?):
+
+## Setup
+1.
+2.
+3.
+
+## Character creation
+- Card / persona format supported:
+- Where to import or create characters:
+- Tips:
+
+## API / backends
+- Built-in model vs bring-your-own:
+- Compatible APIs / backends:
+- Config notes:
+
+## Content / NSFW notes
+- Policy is **backend-dependent** for many UIs (especially SillyTavern-style frontends).
+- Do **not** claim the product is uncensored unless the official docs say so for a specific model/host.
+- Note what you verified, and on which model/backend:
+
+## Troubleshooting
+- Common install / connection issues:
+- Where to find logs:
+- Links you used:
+
+## Sources
+- Official docs:
+- GitHub / release notes:
+- Last checked:
+`;
+};
+
 export const DocConsolidator = () => {
   const [serviceName, setServiceName] = useState("");
   const [customName, setCustomName] = useState("");
+  const [serviceFilter, setServiceFilter] = useState("");
   const [inputText, setInputText] = useState("");
   const [docUrl, setDocUrl] = useState("");
+  const [fetchHint, setFetchHint] = useState("");
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -36,7 +113,21 @@ export const DocConsolidator = () => {
   const charCount = inputText.length;
   const isOverLimit = charCount > MAX_CHARS;
 
+  const groupedServices = useMemo(() => {
+    const q = serviceFilter.trim().toLowerCase();
+    const filtered = chatbots.filter((bot) => {
+      if (!q) return true;
+      return [bot.name, bot.slug, bot.category, bot.type].join(" ").toLowerCase().includes(q);
+    });
+    return CATEGORY_ORDER.map((category) => ({
+      category,
+      label: CATEGORY_LABELS[category],
+      bots: filtered.filter((bot) => bot.category === category),
+    })).filter((group) => group.bots.length > 0);
+  }, [serviceFilter]);
+
   const handleFetchUrl = async () => {
+    setFetchHint("");
     if (!docUrl.trim()) {
       toast({ title: "Missing URL", description: "Paste a documentation URL to fetch.", variant: "destructive" });
       return;
@@ -57,6 +148,7 @@ export const DocConsolidator = () => {
       if (!response.ok) throw new Error(data?.error || `Fetch failed (${response.status})`);
       if (data?.text) {
         setInputText(data.text);
+        setFetchHint("");
         toast({
           title: "Fetched",
           description: data.truncated
@@ -64,17 +156,30 @@ export const DocConsolidator = () => {
             : "Page content fetched — review it, then consolidate.",
         });
       } else {
-        toast({ title: "Empty", description: "No readable text was extracted from that URL.", variant: "destructive" });
+        const hint = coachFetchError("No readable text was extracted from that URL (empty body).");
+        setFetchHint(hint);
+        toast({ title: "Empty", description: hint, variant: "destructive" });
       }
     } catch (err) {
+      const hint = coachFetchError(errMsg(err));
+      setFetchHint(hint);
       toast({
         title: "Fetch failed",
-        description: errMsg(err) || "Could not fetch the URL. Try pasting the documentation text directly instead.",
+        description: hint,
         variant: "destructive",
       });
     } finally {
       setFetching(false);
     }
+  };
+
+  const handleInsertSkeleton = () => {
+    const skeleton = offlineGuideSkeleton(effectiveName || "Service");
+    setResult(skeleton);
+    toast({
+      title: "Offline skeleton inserted",
+      description: "Fill the markdown sections locally. AI consolidate stays optional.",
+    });
   };
 
   const handleConsolidate = async () => {
@@ -142,11 +247,11 @@ export const DocConsolidator = () => {
           Documentation Consolidator
         </h2>
         <p className="text-sm text-muted-foreground">
-          Paste documentation from any chatbot service — or fetch it directly from a URL — and AI will process it into a standardized markdown expert file with setup steps, character creation guides, API configuration, NSFW settings, and troubleshooting.
+          Paste documentation first (or optionally fetch a public URL). Draft a local markdown skeleton anytime.
+          AI consolidation is optional and only runs when a backend is configured — no invented NSFW or payment claims.
         </p>
       </div>
 
-      {/* AI backend status banner */}
       {ai.status === "checking" && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -156,12 +261,17 @@ export const DocConsolidator = () => {
       {aiUnavailable && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <WifiOff className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
-          <div className="text-sm">
+          <div className="text-sm space-y-2">
             <p className="font-medium text-amber-300">AI backend unavailable</p>
             <p className="text-muted-foreground">
-              AI consolidation requires the AI backend; URL fetch does not. You can still copy, download, and save previously generated results.
+              Paste and URL fetch still work. AI Consolidate is disabled until a backend is reachable.
+              Use the offline guide skeleton to draft locally, then copy or download.
             </p>
-            {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
+            {ai.reason && <p className="text-xs text-muted-foreground/80">{ai.reason}</p>}
+            <Button type="button" variant="secondary" size="sm" onClick={handleInsertSkeleton}>
+              <FileText className="h-4 w-4" />
+              Insert offline guide skeleton
+            </Button>
           </div>
         </div>
       )}
@@ -169,17 +279,33 @@ export const DocConsolidator = () => {
       <div className="space-y-4">
         <div>
           <label htmlFor="doc-service-name" className="text-sm font-medium text-foreground mb-1 block">Service Name</label>
+          <Input
+            id="doc-service-filter"
+            aria-label="Filter services"
+            placeholder="Filter services by name or category..."
+            className="mb-2 bg-secondary border-border"
+            value={serviceFilter}
+            onChange={(e) => setServiceFilter(e.target.value)}
+          />
           <Select value={serviceName} onValueChange={(v) => { setServiceName(v); if (v !== "custom") setCustomName(""); }}>
             <SelectTrigger id="doc-service-name" className="bg-secondary border-border">
               <SelectValue placeholder="Select a platform..." />
             </SelectTrigger>
             <SelectContent>
-              {chatbots.map((bot) => (
-                <SelectItem key={bot.slug} value={bot.name}>
-                  {bot.name}
-                </SelectItem>
+              {groupedServices.map((group) => (
+                <SelectGroup key={group.category}>
+                  <SelectLabel>{group.label}</SelectLabel>
+                  {group.bots.map((bot) => (
+                    <SelectItem key={bot.slug} value={bot.name}>
+                      {bot.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               ))}
-              <SelectItem value="custom">Custom / Other</SelectItem>
+              <SelectGroup>
+                <SelectLabel>Other</SelectLabel>
+                <SelectItem value="custom">Custom / Other</SelectItem>
+              </SelectGroup>
             </SelectContent>
           </Select>
           {serviceName === "custom" && (
@@ -194,10 +320,35 @@ export const DocConsolidator = () => {
           )}
         </div>
 
-        {/* URL fetch */}
+        <div>
+          <label htmlFor="doc-input" className="text-sm font-medium text-foreground mb-1 block">
+            Paste Documentation
+          </label>
+          <Textarea
+            id="doc-input"
+            placeholder="Paste documentation text, setup guides, wiki content, README files, etc. This is the primary path — URL fetch below is optional."
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            className="min-h-[220px] bg-secondary border-border font-mono text-sm"
+          />
+          <div className="flex items-center justify-between mt-1">
+            <span className={`text-xs ${isOverLimit ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+              {charCount.toLocaleString()} characters
+            </span>
+          </div>
+          {isOverLimit && (
+            <div className="flex items-center gap-2 mt-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2">
+              <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+              <span className="text-xs text-destructive">
+                Input may be too long — consider splitting into sections.
+              </span>
+            </div>
+          )}
+        </div>
+
         <div>
           <label htmlFor="doc-url" className="text-sm font-medium text-foreground mb-1 block">
-            Fetch Documentation from URL
+            Optional: Fetch from URL
           </label>
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -217,46 +368,40 @@ export const DocConsolidator = () => {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            Fetches the page server-side and extracts readable text — no copy-pasting across tabs. Pages behind logins or heavy JS may not extract well; paste manually in that case.
+            Fetch does not need AI. Login walls, timeouts, and heavy JavaScript pages often fail — paste manually when that happens.
           </p>
-        </div>
-
-        <div>
-          <label htmlFor="doc-input" className="text-sm font-medium text-foreground mb-1 block">
-            Paste Documentation
-          </label>
-          <Textarea
-            id="doc-input"
-            placeholder="Paste documentation text, setup guides, wiki content, README files, etc... (or use the URL fetch above)"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            className="min-h-[200px] bg-secondary border-border font-mono text-sm"
-          />
-          <div className="flex items-center justify-between mt-1">
-            <span className={`text-xs ${isOverLimit ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-              {charCount.toLocaleString()} characters
-            </span>
-          </div>
-          {isOverLimit && (
-            <div className="flex items-center gap-2 mt-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2">
-              <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
-              <span className="text-xs text-destructive">
-                Input may be too long — consider splitting into sections.
-              </span>
+          {fetchHint && (
+            <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+              {fetchHint}
             </div>
           )}
         </div>
 
-        <Button onClick={handleConsolidate} disabled={loading || aiUnavailable} className="w-full sm:w-auto">
-          {loading ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Processing...
-            </>
-          ) : (
-            "Consolidate Documentation"
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={handleConsolidate} disabled={loading || aiUnavailable} className="w-full sm:w-auto">
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Processing...
+              </>
+            ) : aiUnavailable ? (
+              "Consolidate Documentation (AI unavailable)"
+            ) : (
+              "Consolidate Documentation"
+            )}
+          </Button>
+          {!aiUnavailable && (
+            <Button type="button" variant="outline" onClick={handleInsertSkeleton}>
+              <FileText className="h-4 w-4" />
+              Insert offline guide skeleton
+            </Button>
           )}
-        </Button>
+        </div>
+        {aiUnavailable && (
+          <p className="text-xs text-muted-foreground">
+            Consolidate stays disabled while AI is down. Insert the offline skeleton above, or wait until the backend is back.
+          </p>
+        )}
       </div>
 
       {result && (
@@ -280,6 +425,19 @@ export const DocConsolidator = () => {
           <pre tabIndex={0} aria-label="Consolidated documentation result" className="rounded-lg border border-border bg-secondary/50 p-4 text-sm text-muted-foreground overflow-auto max-h-[500px] whitespace-pre-wrap font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {result}
           </pre>
+        </div>
+      )}
+
+      {!result && aiUnavailable && (
+        <div className="rounded-lg border border-dashed border-border bg-secondary/20 p-6 text-center">
+          <p className="text-sm font-medium text-foreground">No draft yet</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            AI consolidate is offline. Insert the offline guide skeleton to start a local markdown draft you can copy into SillyTavern or your host.
+          </p>
+          <Button type="button" className="mt-4" variant="secondary" onClick={handleInsertSkeleton}>
+            <FileText className="h-4 w-4" />
+            Insert offline guide skeleton
+          </Button>
         </div>
       )}
     </div>

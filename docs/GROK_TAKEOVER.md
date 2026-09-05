@@ -273,3 +273,9 @@ Batch 1 presentation/nav/IA landed. No platform records deleted; no push.
 - Directory record for SillyTavern only: tightened overclaim fields (`nsfwPolicy`, description, pricing, knownIssues, lastVerified).
 - Updated docs page reviewed-date assertion to 2026-09-04.
 
+### 2026-09-04 — Tools offline usefulness
+
+- Doc Consolidator: paste-first layout, grouped/filterable service picker, inline fetch-error coaching, offline guide skeleton when AI is down; Fetch stays ungated, Consolidate stays AI-gated.
+- Prompt library lean cut: 18 to 9 median templates with useWhen; dropped Unrestricted/filter-override and thin genre/style duplicates; SillyTavern Author's Note remains verified.
+- Prompt Builder: category groups, useWhen, Fill example values local, Copy primary after render; AI Generate demoted.
+- Honest framing on Prompts/Tools: draft locally, paste into ST/host; AI optional.

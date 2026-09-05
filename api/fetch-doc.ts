@@ -60,14 +60,42 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         Accept: "text/html,text/plain,application/xhtml+xml,*/*",
       },
     });
-    if (!response.ok) throw new Error(`The source returned HTTP ${response.status}.`);
+    if (!response.ok) {
+      const status = response.status;
+      let tip = "Paste the documentation text manually instead.";
+      if (status === 401 || status === 403) tip = "This often means a login wall or blocked bot access — open the page in your browser and paste the text.";
+      else if (status === 404) tip = "The page was not found — check the URL or paste the docs manually.";
+      else if (status === 429) tip = "The source is rate-limiting requests — wait and retry, or paste manually.";
+      else if (status >= 500) tip = "The source had a server error — try again later or paste manually.";
+      res.status(502).json({ error: `The source returned HTTP ${status}. ${tip}` });
+      return;
+    }
     const raw = await response.text();
     const contentType = response.headers.get("content-type") || "";
-    const text = contentType.includes("html") || /<html[\s>]/i.test(raw) ? htmlToMarkdown(raw) : raw.trim();
+    const looksHtml = contentType.includes("html") || /<html[\s>]/i.test(raw);
+    const looksText = contentType.includes("text/plain") || contentType.includes("markdown") || contentType.includes("text/");
+    if (!looksHtml && !looksText && raw.trim().length > 0 && !/<[a-z][\s\S]*>/i.test(raw.slice(0, 500))) {
+      res.status(502).json({
+        error: "The response did not look like HTML or plain text (unexpected content-type). Paste the documentation manually instead.",
+      });
+      return;
+    }
+    const text = looksHtml || /<html[\s>]/i.test(raw) ? htmlToMarkdown(raw) : raw.trim();
+    if (!text) {
+      res.status(502).json({
+        error: "No readable text could be extracted from that URL (empty after cleanup). Heavy JavaScript or login-walled pages often fail — paste manually.",
+      });
+      return;
+    }
     const truncated = text.length > MAX_CHARS;
     res.status(200).json({ text: text.slice(0, MAX_CHARS), truncated, url: parsed.toString() });
   } catch (error) {
-    const message = error instanceof Error && error.name === "AbortError" ? "The source took longer than 15 seconds to respond." : error instanceof Error ? error.message : "Unable to fetch the documentation.";
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "Request timed out after 15 seconds. The source was too slow — paste the documentation text manually instead."
+        : error instanceof Error
+          ? error.message
+          : "Unable to fetch the documentation.";
     res.status(502).json({ error: message });
   } finally {
     clearTimeout(timeout);

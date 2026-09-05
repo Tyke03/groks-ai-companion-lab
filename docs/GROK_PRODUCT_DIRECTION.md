@@ -171,6 +171,8 @@ This experiment:
 
 ## Changelog
 
+- **2026-09-04** - Tools offline usefulness: Doc Consolidator paste-first + offline guide skeleton; lean 9-template prompt library with useWhen; Prompt Builder local fill-examples path.
+
 - **2026-09-03** - Initial product direction document committed on grok/product-direction-batch-1.
 
 - **2026-09-03** - Batch 1 landed on this branch.

@@ -148,15 +148,18 @@ export function matchesCard(bot: Chatbot, spec: CardSpec): boolean {
 }
 
 export function filterChatbots(bots: Chatbot[], state: DirectoryFilterState): Chatbot[] {
-  return bots.filter((bot) => {
-    if (!matchesSearch(bot, state.search)) return false;
-    if (state.category !== "all" && bot.category !== state.category) return false;
-    if (!matchesContent(bot, state.content)) return false;
-    if (!state.features.every((f) => matchesFeature(bot, f))) return false;
-    if (!state.access.every((a) => matchesAccess(bot, a))) return false;
-    if (!state.cards.every((c) => matchesCard(bot, c))) return false;
-    return true;
-  });
+  return bots
+    .filter((bot) => {
+      if (!matchesSearch(bot, state.search)) return false;
+      if (state.category !== "all" && bot.category !== state.category) return false;
+      if (!matchesContent(bot, state.content)) return false;
+      if (!state.features.every((f) => matchesFeature(bot, f))) return false;
+      if (!state.access.every((a) => matchesAccess(bot, a))) return false;
+      if (!state.cards.every((c) => matchesCard(bot, c))) return false;
+      return true;
+    })
+    // Presentation order: A-Z by platform name (case-insensitive). Filter logic stays unchanged.
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
 /**

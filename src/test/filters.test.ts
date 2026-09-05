@@ -97,6 +97,20 @@ describe("access and card matching never treats unknown as true", () => {
   });
 });
 
+describe("filterChatbots presentation order", () => {
+  it("empty filters returns platforms A-Z by name", () => {
+    const result = filterChatbots(chatbots, EMPTY_FILTER_STATE);
+    expect(result.length).toBe(chatbots.length);
+    const names = result.map((b) => b.name);
+    const sorted = [...names].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+    expect(names).toEqual(sorted);
+    // Spot-check: Agnaistic precedes SillyTavern alphabetically
+    expect(names.indexOf("Agnaistic")).toBeLessThan(names.indexOf("SillyTavern"));
+  });
+});
+
 describe("filterChatbots combines constraints with AND", () => {
   it("multi-select access traits combine as AND", () => {
     const result = filterChatbots(chatbots, withState({ access: ["foss", "byok"] }));

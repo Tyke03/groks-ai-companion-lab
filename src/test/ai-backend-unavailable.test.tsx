@@ -27,7 +27,7 @@ describe("AI backend reports unhealthy", () => {
   it("shows the unavailable banner and explains why", async () => {
     render(<DocConsolidator />);
     expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
-    expect(await screen.findByText(/AI backend unavailable/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Mode: Offline only \(AI unavailable\)/i)).toBeInTheDocument();
     expect(screen.getByText(/No provider API key is configured/i)).toBeInTheDocument();
   });
 });

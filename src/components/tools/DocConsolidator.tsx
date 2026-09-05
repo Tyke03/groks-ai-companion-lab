@@ -6,11 +6,14 @@ import { PlatformCombobox } from "@/components/tools/PlatformCombobox";
 import { chatbots } from "@/data/chatbots";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
-import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText } from "lucide-react";
+import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  buildOfflineGuideSkeleton,
+  interpretConsolidateResponse,
+} from "@/lib/docConsolidator";
 
 const MAX_CHARS = 32000;
-
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -41,49 +44,6 @@ const coachFetchError = (raw: string): string => {
   return `${message} Tip: if fetch keeps failing, paste the documentation text into the box below.`;
 };
 
-const offlineGuideSkeleton = (service: string) => {
-  const title = service.trim() || "Service";
-  return `# ${title} — local guide skeleton
-
-> Drafted offline in AI Companion Hub. Fill each section from official docs or your own notes. AI consolidation is optional.
-
-## Overview
-- What this product is:
-- Who it is for:
-- Honest limits (UI-only? needs a backend? account required?):
-
-## Setup
-1.
-2.
-3.
-
-## Character creation
-- Card / persona format supported:
-- Where to import or create characters:
-- Tips:
-
-## API / backends
-- Built-in model vs bring-your-own:
-- Compatible APIs / backends:
-- Config notes:
-
-## Content / NSFW notes
-- Policy is **backend-dependent** for many UIs (especially SillyTavern-style frontends).
-- Do **not** claim the product is uncensored unless the official docs say so for a specific model/host.
-- Note what you verified, and on which model/backend:
-
-## Troubleshooting
-- Common install / connection issues:
-- Where to find logs:
-- Links you used:
-
-## Sources
-- Official docs:
-- GitHub / release notes:
-- Last checked:
-`;
-};
-
 export const DocConsolidator = () => {
   const [serviceName, setServiceName] = useState("");
   const [customName, setCustomName] = useState("");
@@ -91,17 +51,20 @@ export const DocConsolidator = () => {
   const [docUrl, setDocUrl] = useState("");
   const [fetchHint, setFetchHint] = useState("");
   const [result, setResult] = useState("");
+  const [aiErrorBanner, setAiErrorBanner] = useState("");
+  const [resultMode, setResultMode] = useState<"offline" | "ai" | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
   const ai = useAiBackendStatus();
   const aiUnavailable = ai.status === "unavailable";
+  const aiReady = ai.status === "available";
 
   const effectiveName = serviceName === "custom" ? customName : serviceName;
   const charCount = inputText.length;
   const isOverLimit = charCount > MAX_CHARS;
-
+  const hasPaste = Boolean(inputText.trim());
 
   const handleFetchUrl = async () => {
     setFetchHint("");
@@ -130,7 +93,7 @@ export const DocConsolidator = () => {
           title: "Fetched",
           description: data.truncated
             ? "Page content fetched (truncated to 32,000 characters)."
-            : "Page content fetched — review it, then consolidate.",
+            : "Page content fetched - review it, then consolidate.",
         });
       } else {
         const hint = coachFetchError("No readable text was extracted from that URL (empty body).");
@@ -151,11 +114,15 @@ export const DocConsolidator = () => {
   };
 
   const handleInsertSkeleton = () => {
-    const skeleton = offlineGuideSkeleton(effectiveName || "Service");
+    const skeleton = buildOfflineGuideSkeleton(effectiveName || "Service", inputText);
     setResult(skeleton);
+    setResultMode("offline");
+    setAiErrorBanner("");
     toast({
-      title: "Offline skeleton inserted",
-      description: "Fill the markdown sections locally. AI consolidate stays optional.",
+      title: hasPaste ? "Offline draft includes your paste" : "Offline skeleton inserted",
+      description: hasPaste
+        ? "Your pasted notes are in the markdown under Pasted notes. Fill remaining sections locally."
+        : "Paste notes first for a richer draft, or fill the markdown sections locally. AI consolidate stays optional.",
     });
   };
 
@@ -171,7 +138,7 @@ export const DocConsolidator = () => {
     }
 
     setLoading(true);
-    setResult("");
+    setAiErrorBanner("");
 
     try {
       const { data, error } = await withTimeout(supabase.functions.invoke("venice-ai", {
@@ -182,12 +149,25 @@ export const DocConsolidator = () => {
         },
       }));
 
-      if (error) throw error;
-      const consolidated = data?.result || "No result returned.";
-      setResult(consolidated);
+      const outcome = interpretConsolidateResponse(data, error);
+      if (!outcome.ok) {
+        setResult("");
+        setResultMode(null);
+        setAiErrorBanner(outcome.error);
+        toast({ title: "AI consolidate failed", description: outcome.error, variant: "destructive" });
+        return;
+      }
+
+      setResult(outcome.text);
+      setResultMode("ai");
+      setAiErrorBanner("");
       toast({ title: "Documentation consolidated", description: "Your markdown guide is ready to review." });
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to process documentation.", variant: "destructive" });
+      const message = errMsg(err) || "Failed to process documentation.";
+      setResult("");
+      setResultMode(null);
+      setAiErrorBanner(message);
+      toast({ title: "AI consolidate failed", description: message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -225,7 +205,9 @@ export const DocConsolidator = () => {
         </h2>
         <p className="text-sm text-muted-foreground">
           Secondary workbench tool: build a Hub guide from pasted notes (or optionally fetch a public URL).
-          Draft a local markdown skeleton anytime. AI consolidation is optional and only runs when a backend is configured — no invented NSFW or payment claims.
+          Two clear modes — <strong className="text-foreground font-medium">Draft offline</strong> (always works; includes your paste)
+          and <strong className="text-foreground font-medium">AI Consolidate</strong> (optional; needs a configured backend).
+          No invented NSFW or payment claims.
         </p>
       </div>
 
@@ -235,19 +217,31 @@ export const DocConsolidator = () => {
           Checking AI backend...
         </div>
       )}
+      {aiReady && (
+        <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3" role="status">
+          <Sparkles className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+          <div className="text-sm space-y-1">
+            <p className="font-medium text-emerald-300">Mode: AI available</p>
+            <p className="text-muted-foreground">
+              Use <span className="text-foreground">AI Consolidate</span> to rewrite pasted docs into a Hub guide,
+              or <span className="text-foreground">Draft offline</span> to keep a local skeleton that includes your paste — no AI required.
+            </p>
+          </div>
+        </div>
+      )}
       {aiUnavailable && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <WifiOff className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
           <div className="text-sm space-y-2">
-            <p className="font-medium text-amber-300">AI backend unavailable</p>
+            <p className="font-medium text-amber-300">Mode: Offline only (AI unavailable)</p>
             <p className="text-muted-foreground">
               Paste and URL fetch still work. AI Consolidate is disabled until a backend is reachable.
-              Use the offline guide skeleton to draft locally, then copy or download.
+              Use Draft offline — it embeds your pasted notes into the markdown skeleton.
             </p>
             {ai.reason && <p className="text-xs text-muted-foreground/80">{ai.reason}</p>}
             <Button type="button" variant="secondary" size="sm" onClick={handleInsertSkeleton}>
               <FileText className="h-4 w-4" />
-              Insert offline guide skeleton
+              Draft offline{hasPaste ? " (includes paste)" : ""}
             </Button>
           </div>
         </div>
@@ -263,7 +257,7 @@ export const DocConsolidator = () => {
             options={chatbots}
             allowCustom
             placeholder="Select a platform..."
-            searchPlaceholder="Search platforms A–Z..."
+            searchPlaceholder="Search platforms A?Z..."
             aria-label="Select a platform"
           />
           {serviceName === "custom" && (
@@ -284,7 +278,7 @@ export const DocConsolidator = () => {
           </label>
           <Textarea
             id="doc-input"
-            placeholder="Paste documentation text, setup guides, wiki content, README files, etc. This is the primary path — URL fetch below is optional."
+            placeholder="Paste documentation text, setup guides, wiki content, README files, etc. This is the primary path — used by both Draft offline and AI Consolidate. URL fetch below is optional."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             className="min-h-[220px] bg-secondary border-border font-mono text-sm"
@@ -292,13 +286,14 @@ export const DocConsolidator = () => {
           <div className="flex items-center justify-between mt-1">
             <span className={`text-xs ${isOverLimit ? "text-destructive font-medium" : "text-muted-foreground"}`}>
               {charCount.toLocaleString()} characters
+              {hasPaste ? " - will be included in offline drafts" : ""}
             </span>
           </div>
           {isOverLimit && (
             <div className="flex items-center gap-2 mt-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2">
               <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
               <span className="text-xs text-destructive">
-                Input may be too long — consider splitting into sections.
+                Input may be too long - consider splitting into sections.
               </span>
             </div>
           )}
@@ -336,36 +331,63 @@ export const DocConsolidator = () => {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleInsertSkeleton}
+            className="w-full sm:w-auto"
+          >
+            <FileText className="h-4 w-4" />
+            Draft offline{hasPaste ? " (includes paste)" : ""}
+          </Button>
           <Button onClick={handleConsolidate} disabled={loading || aiUnavailable} className="w-full sm:w-auto">
             {loading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Processing...
+                AI consolidating...
               </>
             ) : aiUnavailable ? (
-              "Consolidate Documentation (AI unavailable)"
+              "AI Consolidate (unavailable)"
             ) : (
-              "Consolidate Documentation"
+              <>
+                <Sparkles className="h-4 w-4" />
+                AI Consolidate
+              </>
             )}
           </Button>
-          {!aiUnavailable && (
-            <Button type="button" variant="outline" onClick={handleInsertSkeleton}>
-              <FileText className="h-4 w-4" />
-              Insert offline guide skeleton
-            </Button>
-          )}
         </div>
-        {aiUnavailable && (
-          <p className="text-xs text-muted-foreground">
-            Consolidate stays disabled while AI is down. Insert the offline skeleton above, or wait until the backend is back.
-          </p>
+        <p className="text-xs text-muted-foreground">
+          <span className="text-foreground font-medium">Draft offline</span> always works and embeds pasted notes.
+          {" "}
+          <span className="text-foreground font-medium">AI Consolidate</span> needs a healthy backend and will show an error if the model returns nothing.
+        </p>
+        {aiErrorBanner && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">AI consolidate failed</p>
+              <p className="text-destructive/90">{aiErrorBanner}</p>
+            </div>
+          </div>
         )}
       </div>
 
       {result && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-display font-semibold text-foreground">Result</h3>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <h3 className="font-display font-semibold text-foreground">Result</h3>
+              {resultMode && (
+                <p className="text-xs text-muted-foreground">
+                  {resultMode === "offline"
+                    ? "Offline draft (local skeleton — paste included when provided)"
+                    : "AI consolidate output - review before publishing"}
+                </p>
+              )}
+            </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleCopy}>
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
@@ -390,11 +412,12 @@ export const DocConsolidator = () => {
         <div className="rounded-lg border border-dashed border-border bg-secondary/20 p-6 text-center">
           <p className="text-sm font-medium text-foreground">No draft yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            AI consolidate is offline. Insert the offline guide skeleton to start a local markdown draft you can copy into SillyTavern or your host.
+            AI consolidate is offline. Draft offline to start a local markdown guide
+            {hasPaste ? " that includes your pasted notes" : ""} - then copy into SillyTavern or your host.
           </p>
           <Button type="button" className="mt-4" variant="secondary" onClick={handleInsertSkeleton}>
             <FileText className="h-4 w-4" />
-            Insert offline guide skeleton
+            Draft offline{hasPaste ? " (includes paste)" : ""}
           </Button>
         </div>
       )}

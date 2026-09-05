@@ -168,7 +168,11 @@ Documentation:
 ${text}`;
 
       const result = await callLLM('You are a technical documentation specialist. Consolidate raw documentation into clean, structured markdown.', prompt);
-      return new Response(JSON.stringify({ result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const trimmed = typeof result === 'string' ? result.trim() : '';
+      if (!trimmed) {
+        return new Response(JSON.stringify({ error: 'AI returned an empty result' }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ result: trimmed }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: GENERATE SINGLE FIELD ===

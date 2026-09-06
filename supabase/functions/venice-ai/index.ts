@@ -155,37 +155,43 @@ function collectContextParts(existingFields: Record<string, unknown> | null | un
 }
 
 // Card-authoring models: prefer strong general instruct (GLM/Qwen), not RP/uncensored Venice personas.
-// Prefer flash for edge latency (~<50s). include_venice_system_prompt stays false.
-// OpenRouter fallback: Llama 3.3 70B Instruct free.
+// Venice whole-card uses streaming: wait while chunks arrive; abort only on stall/hung or wall clock.
+// include_venice_system_prompt stays false. OpenRouter fallback: current free Gemma 4 instruct.
 const VENICE_CARD_MODEL = 'zai-org-glm-4.7-flash';
-const OPENROUTER_CARD_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
-/** Venice must fail fast so OpenRouter can still finish inside Supabase edge limits. */
-const VENICE_TIMEOUT_MS = 28_000;
+const OPENROUTER_CARD_MODEL = 'google/gemma-4-31b-it:free';
+/** No chunk for this long => hung (not a blunt hard kill while tokens are flowing). */
+const VENICE_STALL_MS = 14_000;
+/** Absolute ceiling even if chunks keep arriving (edge-friendly). */
+const VENICE_MAX_WALL_MS = 110_000;
+/** One Venice retry after stall/hung/connection death, then OpenRouter -> Lovable. */
+const VENICE_MAX_ATTEMPTS = 2;
 const CARD_JSON_MAX_TOKENS = 4096;
+
 async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CARD_JSON_MAX_TOKENS, temperature = 0.3) {
   const veniceKey = Deno.env.get('VENICE_API_KEY');
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
   const lovableKey = Deno.env.get('LOVABLE_API_KEY');
   const failures: string[] = [];
 
-  // Try Venice first (short timeout so fallbacks can still finish under edge limits)
+  // Venice first: stream-aware (extend while active; abort on stall / wall / disconnect)
   if (veniceKey) {
-    try {
-      return await callProvider(
-        'https://api.venice.ai/api/v1/chat/completions',
-        veniceKey,
-        VENICE_CARD_MODEL,
-        systemPrompt,
-        userPrompt,
-        maxTokens,
-        temperature,
-        true,
-        VENICE_TIMEOUT_MS,
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error('Venice failed:', msg);
-      failures.push(`Venice: ${msg}`);
+    for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await callVeniceStreaming(
+          veniceKey,
+          VENICE_CARD_MODEL,
+          systemPrompt,
+          userPrompt,
+          maxTokens,
+          temperature,
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Venice attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
+        failures.push(`Venice: ${msg}`);
+        const retryable = /stall|hung|timeout|wall|network|connection|abort|fetch|5\d\d/i.test(msg);
+        if (!retryable || attempt >= VENICE_MAX_ATTEMPTS) break;
+      }
     }
   }
 
@@ -235,6 +241,152 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
   throw new Error(`All LLM providers failed. ${failures.join(' | ')}`);
 }
 
+/** Stream Venice chat completions; abort only if stalled or past max wall clock. */
+async function callVeniceStreaming(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number,
+  temperature: number,
+): Promise<string> {
+  const payload = {
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    max_tokens: maxTokens,
+    temperature,
+    stream: true,
+    venice_parameters: { include_venice_system_prompt: false },
+  };
+
+  const controller = new AbortController();
+  const started = Date.now();
+  let lastChunkAt = started;
+  let settled = false;
+
+  const watchdog = setInterval(() => {
+    if (settled) return;
+    const now = Date.now();
+    if (now - started > VENICE_MAX_WALL_MS) {
+      settled = true;
+      controller.abort('venice-wall');
+      return;
+    }
+    if (now - lastChunkAt > VENICE_STALL_MS) {
+      settled = true;
+      controller.abort('venice-stall');
+    }
+  }, 1000);
+
+  let response: Response;
+  try {
+    response = await fetch('https://api.venice.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    clearInterval(watchdog);
+    if (controller.signal.aborted) {
+      const reason = String(controller.signal.reason || '');
+      if (reason.includes('wall')) {
+        throw new Error(`hung: wall clock exceeded ${VENICE_MAX_WALL_MS}ms`);
+      }
+      throw new Error(`hung: no chunk for ${VENICE_STALL_MS}ms (stall before headers)`);
+    }
+    throw e;
+  }
+
+  if (!response.ok) {
+    clearInterval(watchdog);
+    const errorData = await response.text();
+    console.error('Venice LLM API error:', errorData);
+    throw new Error(`LLM API error: ${response.status}`);
+  }
+
+  if (!response.body) {
+    clearInterval(watchdog);
+    throw new Error('hung: empty Venice stream body');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let sawChunk = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastChunkAt = Date.now();
+      sawChunk = true;
+      buffer += decoder.decode(value, { stream: true });
+
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        let line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+        if (line.endsWith('\r')) line = line.slice(0, -1);
+        if (!line || line.startsWith(':')) continue;
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') {
+          settled = true;
+          clearInterval(watchdog);
+          return content;
+        }
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed?.choices?.[0]?.delta?.content;
+          if (typeof delta === 'string' && delta.length) {
+            content += delta;
+            lastChunkAt = Date.now();
+          }
+          const full = parsed?.choices?.[0]?.message?.content;
+          if (!delta && typeof full === 'string' && full.length) {
+            content = full;
+            lastChunkAt = Date.now();
+          }
+        } catch {
+          // ignore partial JSON
+        }
+      }
+    }
+  } catch (e) {
+    clearInterval(watchdog);
+    if (controller.signal.aborted) {
+      const reason = String(controller.signal.reason || '');
+      if (reason.includes('wall')) {
+        throw new Error(`hung: wall clock exceeded ${VENICE_MAX_WALL_MS}ms after ${content.length} chars`);
+      }
+      throw new Error(`hung: no chunk for ${VENICE_STALL_MS}ms after ${content.length} chars`);
+    }
+    throw e;
+  } finally {
+    settled = true;
+    clearInterval(watchdog);
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!content) {
+    throw new Error(sawChunk ? 'hung: stream ended with empty content' : 'hung: connection died with no chunks');
+  }
+  return content;
+}
+
 async function callProvider(
   url: string,
   apiKey: string,
@@ -255,7 +407,6 @@ async function callProvider(
     max_tokens: maxTokens,
     temperature,
   };
-  // Disable Venice default uncensored/RP system prompt for structured card authoring.
   if (isVenice) {
     payload.venice_parameters = { include_venice_system_prompt: false };
   }

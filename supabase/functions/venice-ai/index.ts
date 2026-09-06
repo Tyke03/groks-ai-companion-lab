@@ -15,14 +15,11 @@ const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern ex
 - Steer tone/length from the character's name, personality, scenario, first message, and description.
 - Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker (then shorter replies are OK).
 
-Good shape:
+Good shape (3 blocks; keep each exchange multi-line but concise):
 <START>
-{{user}}: Hey Riley, I'm so excited to be working with you.
-{{char}}: *giggles* I'm excited to have you on board, too! I think we're going to make some magic happen. *she leans in close* But first, let's get one thing straight - I'm the boss, and you're going to have to do what I say. *she winks*
+{{user}}: Hey — ready to start?
+{{char}}: *smiles* Absolutely. *leans in* Follow my lead and we'll make magic.
 
-<START>
-{{user}}: ...
-{{char}}: ...
 `;
 
 
@@ -158,47 +155,97 @@ function collectContextParts(existingFields: Record<string, unknown> | null | un
 }
 
 // Card-authoring models: prefer strong general instruct (GLM/Qwen), not RP/uncensored Venice personas.
-// Documented choice: Venice zai-org-glm-4.7 (GLM-class structured writing). OpenRouter: Llama 3.3 70B Instruct free.
-const VENICE_CARD_MODEL = 'zai-org-glm-4.7';
+// Prefer flash for edge latency (~<50s). include_venice_system_prompt stays false.
+// OpenRouter fallback: Llama 3.3 70B Instruct free.
+const VENICE_CARD_MODEL = 'zai-org-glm-4.7-flash';
 const OPENROUTER_CARD_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
-
-async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 4096, temperature = 0.3) {
+/** Venice must fail fast so OpenRouter can still finish inside Supabase edge limits. */
+const VENICE_TIMEOUT_MS = 28_000;
+const CARD_JSON_MAX_TOKENS = 4096;
+async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CARD_JSON_MAX_TOKENS, temperature = 0.3) {
   const veniceKey = Deno.env.get('VENICE_API_KEY');
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
   const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  const failures: string[] = [];
 
-  // Try Venice first
+  // Try Venice first (short timeout so fallbacks can still finish under edge limits)
   if (veniceKey) {
     try {
-      return await callProvider('https://api.venice.ai/api/v1/chat/completions', veniceKey, VENICE_CARD_MODEL, systemPrompt, userPrompt, maxTokens, temperature, true);
+      return await callProvider(
+        'https://api.venice.ai/api/v1/chat/completions',
+        veniceKey,
+        VENICE_CARD_MODEL,
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        true,
+        VENICE_TIMEOUT_MS,
+      );
     } catch (e) {
-      console.error('Venice failed:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Venice failed:', msg);
+      failures.push(`Venice: ${msg}`);
     }
   }
 
   // Fallback to OpenRouter
   if (openrouterKey) {
     try {
-      return await callProvider('https://openrouter.ai/api/v1/chat/completions', openrouterKey, OPENROUTER_CARD_MODEL, systemPrompt, userPrompt, maxTokens, temperature, false);
+      return await callProvider(
+        'https://openrouter.ai/api/v1/chat/completions',
+        openrouterKey,
+        OPENROUTER_CARD_MODEL,
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        false,
+      );
     } catch (e) {
-      console.error('OpenRouter failed:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('OpenRouter failed:', msg);
+      failures.push(`OpenRouter: ${msg}`);
     }
   }
 
   // Final fallback: Lovable AI Gateway
   if (lovableKey) {
     try {
-      return await callProvider('https://ai.gateway.lovable.dev/v1/chat/completions', lovableKey, 'google/gemini-2.5-flash', systemPrompt, userPrompt, maxTokens, temperature, false);
+      return await callProvider(
+        'https://ai.gateway.lovable.dev/v1/chat/completions',
+        lovableKey,
+        'google/gemini-2.5-flash',
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        false,
+      );
     } catch (e) {
-      console.error('Lovable AI Gateway failed:', e);
-      throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Lovable AI Gateway failed:', msg);
+      failures.push(`Lovable: ${msg}`);
     }
   }
 
-  throw new Error('No API keys configured');
+  if (failures.length === 0) {
+    throw new Error('No API keys configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY)');
+  }
+  throw new Error(`All LLM providers failed. ${failures.join(' | ')}`);
 }
 
-async function callProvider(url: string, apiKey: string, model: string, systemPrompt: string, userPrompt: string, maxTokens: number, temperature: number, isVenice = false) {
+async function callProvider(
+  url: string,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number,
+  temperature: number,
+  isVenice = false,
+  timeoutMs?: number,
+) {
   const payload: Record<string, unknown> = {
     model,
     messages: [
@@ -212,14 +259,28 @@ async function callProvider(url: string, apiKey: string, model: string, systemPr
   if (isVenice) {
     payload.venice_parameters = { include_venice_system_prompt: false };
   }
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller?.signal,
+    });
+  } catch (e) {
+    if (controller?.signal.aborted) {
+      throw new Error(`timeout after ${timeoutMs}ms`);
+    }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const errorData = await response.text();
@@ -351,7 +412,7 @@ ${text}`;
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
         `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldName}". Still produce the FULL card JSON (all keys). The current text in "${fieldName}" is labeled context above and must be digested like every other field.`;
 
-      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, 8192, 0.7);
+      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
       const { card, parseError } = parseWholeCardJson(result);
       if (parseError || !card) {
         return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -374,7 +435,7 @@ ${text}`;
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
         `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
 
-      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, 8192, 0.7);
+      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
       const { card, parseError } = parseWholeCardJson(result);
       if (parseError || !card) {
         return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -530,6 +591,9 @@ Generate ALL variables listed above. Every variable must have a value. Stay cons
     return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     console.error('Error:', error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    const upstream = /LLM API error|timeout|All LLM providers failed|No API keys configured/i.test(message);
+    const status = upstream ? 502 : 500;
+    return new Response(JSON.stringify({ error: message }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

@@ -70,6 +70,30 @@ import {
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** Prefer edge JSON `{ error }` over opaque Supabase "non-2xx" invoke messages. */
+const edgeInvokeError = async (error: unknown, data: unknown): Promise<string> => {
+  if (data && typeof data === "object" && data !== null && "error" in data) {
+    const e = (data as { error?: unknown }).error;
+    if (e != null && String(e).trim()) return String(e);
+  }
+  const ctx = error && typeof error === "object" && error !== null && "context" in error
+    ? (error as { context?: unknown }).context
+    : undefined;
+  if (ctx && typeof ctx === "object" && ctx !== null && "json" in ctx && typeof (ctx as { json: () => Promise<unknown> }).json === "function") {
+    try {
+      const body = await (ctx as { json: () => Promise<unknown> }).json();
+      if (body && typeof body === "object" && body !== null && "error" in body) {
+        const e = (body as { error?: unknown }).error;
+        if (e != null && String(e).trim()) return String(e);
+      }
+    } catch {
+      // ignore body parse failures
+    }
+  }
+  const msg = errMsg(error);
+  return msg || "Edge function failed";
+};
+
 /** Fields whose value is an array of strings (rendered with list editors) */
 const ARRAY_FIELDS = new Set(["source", "group_only_greetings", "alternate_greetings"]);
 
@@ -436,9 +460,19 @@ export const CharacterCardBuilder = () => {
           keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error) {
+        toast({ title: "Error", description: String(data.error), variant: "destructive" });
+        return;
+      }
       if (data?.parseError) {
-        toast({ title: "Partial result", description: "AI rebuilt the card but the response could not be parsed for this field.", variant: "destructive" });
+        toast({
+          title: "Partial result",
+          description: data?.error
+            ? String(data.error)
+            : "AI rebuilt the card but the response could not be parsed for this field.",
+          variant: "destructive",
+        });
         return;
       }
       if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
@@ -470,7 +504,11 @@ export const CharacterCardBuilder = () => {
       const { data, error } = await supabase.functions.invoke("venice-ai", {
         body: { action: "generate-all", existingFields: card, generationMode: "default", specVersion },
       });
-      if (error) throw error;
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error && !data?.result) {
+        toast({ title: "Error", description: String(data.error), variant: "destructive" });
+        return;
+      }
       if (data?.result && typeof data.result === "object" && !data.parseError) {
         setCard((prev) => {
           const updated = { ...prev };
@@ -495,7 +533,13 @@ export const CharacterCardBuilder = () => {
         });
         toast({ title: "Generated", description: "All fields have been generated/enhanced by AI." });
       } else if (data?.parseError) {
-        toast({ title: "Partial result", description: "AI response couldn't be parsed. Try generating individual fields.", variant: "destructive" });
+        toast({
+          title: "Partial result",
+          description: data?.error
+            ? String(data.error)
+            : "AI response couldn't be parsed. Try generating individual fields.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       toast({ title: "Error", description: errMsg(err) || "Failed to generate.", variant: "destructive" });

@@ -32,6 +32,7 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
+import { normalizeAiMultiline, parseAiStringList } from "@/lib/cardAiFormat";
 import {
   createNewCard,
   deleteCard,
@@ -78,7 +79,7 @@ const fieldDescriptions: Record<string, string> = {
   personality: "Core personality traits, behavioral patterns, and quirks",
   scenario: "The setting/situation where the user meets this character",
   first_mes: "The character's opening message with actions and dialogue",
-  mes_example: "Example dialogue exchanges showing the character's voice",
+  mes_example: "Three SillyTavern <START> blocks using {{user}}: / {{char}}: labels, *actions*, and richer multi-line exchanges",
   creator_notes: "Notes for users about how to best use this character",
   system_prompt: "Instructions for the AI on how to roleplay this character",
   post_history_instructions: "Brief reminder inserted after chat history",
@@ -163,14 +164,6 @@ function ListEditor({
       </Button>
     </div>
   );
-}
-
-/** Splits an AI/import string value into a list (commas or newlines). */
-function toList(value: string): string[] {
-  return value
-    .split(/[\n,]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 export const CharacterCardBuilder = () => {
@@ -436,11 +429,14 @@ export const CharacterCardBuilder = () => {
         body: { action: "generate-field", fieldName, fieldDescription: fieldDescriptions[fieldName], existingFields: card, keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined },
       });
       if (error) throw error;
-      if (data?.result) {
+      if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
         if (ARRAY_FIELDS.has(fieldName)) {
-          updateList(fieldName, toList(data.result));
+          const max = fieldName === "alternate_greetings" ? 3 : undefined;
+          updateList(fieldName, parseAiStringList(data.result, { max }));
+        } else if (fieldName === "mes_example" || fieldName === "first_mes") {
+          updateField(fieldName, normalizeAiMultiline(String(data.result)));
         } else {
-          updateField(fieldName, data.result);
+          updateField(fieldName, typeof data.result === "string" ? data.result : String(data.result));
         }
       }
     } catch (err) {
@@ -458,7 +454,7 @@ export const CharacterCardBuilder = () => {
     setGeneratingAll(true);
     try {
       const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: { action: "generate-all", existingFields: card, generationMode: "default" },
+        body: { action: "generate-all", existingFields: card, generationMode: "default", specVersion },
       });
       if (error) throw error;
       if (data?.result && typeof data.result === "object" && !data.parseError) {
@@ -467,12 +463,17 @@ export const CharacterCardBuilder = () => {
           for (const [key, value] of Object.entries(data.result)) {
             if (key in updated) {
               const record = updated as Record<string, unknown>;
-              if (ARRAY_FIELDS.has(key) && typeof value === "string") {
-                record[key] = toList(value);
+              if (ARRAY_FIELDS.has(key)) {
+                const max = key === "alternate_greetings" ? 3 : undefined;
+                record[key] = parseAiStringList(value, { max });
+              } else if (key === "mes_example" || key === "first_mes") {
+                record[key] = normalizeAiMultiline(String(value ?? ""));
               } else if (typeof value === "string") {
                 record[key] = value;
               } else if (Array.isArray(value)) {
-                record[key] = value.map(String);
+                record[key] = value.map(String).join(", ");
+              } else if (value != null) {
+                record[key] = String(value);
               }
             }
           }
@@ -584,7 +585,7 @@ export const CharacterCardBuilder = () => {
     { key: "personality", label: "Personality", multiline: true, placeholder: "Confident, seductive, witty, caring, slightly mischievous..." },
     { key: "scenario", label: "Scenario", multiline: true, placeholder: "{{user}} has stumbled upon {{char}}'s tower while seeking shelter..." },
     { key: "first_mes", label: "First Message", multiline: true, placeholder: "*Luna looks up from her ancient tome* \"Well, well...\"" },
-    { key: "mes_example", label: "Example Dialogue", multiline: true, placeholder: "<START>\n{{user}}: What are you reading?\n{{char}}: *She tilts the book*..." },
+    { key: "mes_example", label: "Example Dialogue", multiline: true, placeholder: "<START>\n{{user}}: Hey Riley, I'm so excited to be working with you.\n{{char}}: *giggles* I'm excited to have you on board, too! *she leans in close* But first, let's get one thing straight - I'm the boss. *she winks*\n\n<START>\n{{user}}: ...\n{{char}}: ..." },
     { key: "system_prompt", label: "System Prompt", multiline: true, placeholder: "Write {{char}}'s next reply in a roleplay with {{user}}..." },
     { key: "post_history_instructions", label: "Post History Instructions", multiline: true, placeholder: "End each response with an action or question..." },
     { key: "creator_notes", label: "Creator Notes", multiline: true, placeholder: "This character works best with creative/roleplay models..." },

@@ -3,6 +3,60 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+
+const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern example dialogue:
+
+- Produce exactly THREE separate example blocks.
+- Each block starts with <START> alone on its own line.
+- Immediately after <START>, use {{user}}: and {{char}}: speaker labels (never User:, never the character's real name as a label, never Name:).
+- Do NOT wrap entire lines in quotes.
+- Put actions and inner thoughts in single asterisks, SillyTavern-style: *giggles* *she leans in close*
+- Do NOT mash actions with semicolons or put the whole exchange on one line.
+- Steer tone/length from the character's name, personality, scenario, first message, and description.
+- Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker (then shorter replies are OK).
+
+Good shape:
+<START>
+{{user}}: Hey Riley, I'm so excited to be working with you.
+{{char}}: *giggles* I'm excited to have you on board, too! I think we're going to make some magic happen. *she leans in close* But first, let's get one thing straight - I'm the boss, and you're going to have to do what I say. *she winks*
+
+<START>
+{{user}}: ...
+{{char}}: ...
+`;
+
+function formatExistingFieldValue(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const t = value.trim();
+    return t ? t : null;
+  }
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => String(v).trim()).filter(Boolean);
+    return parts.length ? parts.join('\n') : null;
+  }
+  return null;
+}
+
+function collectContextParts(existingFields: Record<string, unknown> | null | undefined, fieldOrder?: string[]): string[] {
+  const contextParts: string[] = [];
+  if (!existingFields || typeof existingFields !== 'object') return contextParts;
+  const keys = fieldOrder && fieldOrder.length
+    ? fieldOrder
+    : Object.keys(existingFields);
+  for (const key of keys) {
+    const formatted = formatExistingFieldValue(existingFields[key]);
+    if (formatted) contextParts.push(`${key}: ${formatted}`);
+  }
+  if (fieldOrder) {
+    for (const [key, value] of Object.entries(existingFields)) {
+      if (fieldOrder.includes(key)) continue;
+      const formatted = formatExistingFieldValue(value);
+      if (formatted) contextParts.push(`${key}: ${formatted}`);
+    }
+  }
+  return contextParts;
+}
+
 async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 4096, temperature = 0.3) {
   const veniceKey = Deno.env.get('VENICE_API_KEY');
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
@@ -182,13 +236,18 @@ ${text}`;
         return new Response(JSON.stringify({ error: 'fieldName is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const contextParts: string[] = [];
-      if (existingFields) {
-        for (const [key, value] of Object.entries(existingFields)) {
-          if (value && typeof value === 'string' && (value as string).trim()) {
-            contextParts.push(`${key}: ${value}`);
-          }
-        }
+      const contextParts = collectContextParts(existingFields);
+
+      let extraRules = '';
+      let maxTokens = 2048;
+      if (fieldName === 'mes_example') {
+        maxTokens = 3500;
+        extraRules = `\n\n${MES_EXAMPLE_FORMAT_RULES}\nWrite ONLY the mes_example content — no JSON, no markdown fences, no field labels.`;
+      } else if (fieldName === 'alternate_greetings' || fieldName === 'group_only_greetings') {
+        maxTokens = 2048;
+        extraRules = `\n\nReturn EXACTLY 3 greeting messages as a JSON array of strings (["greeting1","greeting2","greeting3"]). Each greeting should be a full opening message with *actions* and natural dialogue, steered from the character context. No markdown fences.`;
+      } else if (fieldName === 'first_mes') {
+        extraRules = `\n\nWrite a vivid opening message using *asterisks for actions* and natural dialogue (no wrapping the whole message in quotes). Stay consistent with the character.`;
       }
 
       const prompt = `Generate content for the "${fieldName}" field of a character card.
@@ -197,11 +256,12 @@ ${keywords ? `Keywords/seed content to build from: ${keywords}` : ''}
 
 ${contextParts.length > 0 ? `FULL CHARACTER CONTEXT (use ALL of this to inform your generation — stay consistent, expand on existing details, never contradict):\n${contextParts.join('\n')}` : 'No other fields filled yet — create something original and compelling.'}
 
-IMPORTANT: Build upon and expand the existing character context. If keywords/seed text is provided, use them as the foundation but enhance and flesh out the content significantly. Write ONLY the field content — no labels, no markdown headers, no explanation. For dialogue/message fields, use *asterisks for actions* and "quotes for dialogue".`;
+IMPORTANT: Build upon and expand the existing character context. If keywords/seed text is provided, use them as the foundation but enhance and flesh out the content significantly. Write ONLY the field content — no labels, no markdown headers, no explanation.${extraRules}
+${fieldName !== 'mes_example' && fieldName !== 'alternate_greetings' && fieldName !== 'group_only_greetings' ? 'For dialogue/message fields, use *asterisks for actions* and natural spoken dialogue (not Name: labels).' : ''}`;
 
       const result = await callLLM(
         'You are an expert character card creator for AI roleplay platforms (SillyTavern, TavernAI, Chub.ai). You write vivid, detailed, engaging character definitions. Always stay consistent with any existing character context provided. Never contradict existing fields — build upon them.',
-        prompt, 2048, 0.8
+        prompt, maxTokens, 0.8
       );
 
       return new Response(JSON.stringify({ result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -209,19 +269,12 @@ IMPORTANT: Build upon and expand the existing character context. If keywords/see
 
     // === CHARACTER CARD: GENERATE ALL FIELDS ===
     if (action === 'generate-all') {
-      const { existingFields } = body;
+      const { existingFields, specVersion } = body;
 
-      const contextParts: string[] = [];
-      const allFields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes', 'tags', 'nickname', 'source', 'group_only_greetings'];
+      const allFields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes', 'tags', 'nickname', 'source', 'alternate_greetings', 'group_only_greetings'];
 
-      if (existingFields) {
-        for (const field of allFields) {
-          const val = existingFields[field];
-          if (val && typeof val === 'string' && val.trim()) {
-            contextParts.push(`${field}: ${val}`);
-          }
-        }
-      }
+      const contextParts = collectContextParts(existingFields, allFields);
+      const isV3 = specVersion === 'v3' || specVersion === 'V3';
 
       const prompt = `Generate a COMPLETE character card. Fill ALL of these fields: ${allFields.join(', ')}
 
@@ -234,24 +287,26 @@ Field guidelines:
 - description: 2-4 paragraphs covering appearance, background, abilities, and key traits
 - personality: Comma-separated personality traits with brief explanations
 - scenario: The setting/situation where the user meets this character
-- first_mes: The character's opening message with *actions* and "dialogue"
-- mes_example: Example dialogue exchanges in <START> format showing the character's voice
+- first_mes: The character's opening message with *actions* and natural dialogue
+- mes_example: ${MES_EXAMPLE_FORMAT_RULES}
+  Encode mes_example as a single JSON string with real line breaks between <START> blocks. Never collapse the three blocks onto one line.
 - system_prompt: Instructions for the AI on how to roleplay this character
 - post_history_instructions: Brief reminder inserted after chat history
 - creator_notes: Notes for other users about how to best use this character
 - tags: Comma-separated tags for categorization
 - nickname: Alternative name or alias
-- source: Leave empty string if not applicable
-- group_only_greetings: Leave empty string if not applicable
+- source: Array of source URL strings if known; otherwise []
+- alternate_greetings: REQUIRED — a JSON array of EXACTLY 3 distinct alternate opening messages (full greetings with *actions* and dialogue), each usable instead of first_mes. Never leave this empty or as a single string.
+- group_only_greetings: A JSON array of 1-3 group-chat greetings that acknowledge other characters are present. Prefer a non-empty array when useful; otherwise [].
 
-Generate ALL fields. Write engaging, detailed content that is consistent across all fields.`;
+Generate ALL fields. Write engaging, detailed content that is consistent across all fields. Do not leave alternate_greetings blank when generation succeeds.${isV3 ? ' Prefer filling V3 list fields (source, group_only_greetings) as arrays.' : ' Include group_only_greetings as an array when you can honestly invent useful group openers; otherwise [].'}`;
 
       const result = await callLLM(
-        'You are an expert character card creator. Create rich, detailed, engaging characters for AI roleplay. ALWAYS respond with valid JSON only — no markdown, no explanation, just the JSON object. Generate ALL requested fields.',
+        'You are an expert character card creator. Create rich, detailed, engaging characters for AI roleplay. ALWAYS respond with valid JSON only — no markdown, no explanation, just the JSON object. Generate ALL requested fields, including alternate_greetings as an array of exactly 3 strings and mes_example with three <START> blocks.',
         prompt, 4096, 0.8
       );
 
-      let parsed: Record<string, string> = {};
+      let parsed: Record<string, unknown> = {};
       try {
         const jsonMatch = result.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);

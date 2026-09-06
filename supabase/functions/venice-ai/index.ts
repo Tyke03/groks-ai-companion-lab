@@ -177,7 +177,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
   if (veniceKey) {
     for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
       try {
-        return await callVeniceStreaming(
+        const content = await callVeniceStreaming(
           veniceKey,
           VENICE_CARD_MODEL,
           systemPrompt,
@@ -185,6 +185,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
           maxTokens,
           temperature,
         );
+        return { content, provider: 'venice' };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Venice attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
@@ -198,7 +199,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
   // Fallback to OpenRouter
   if (openrouterKey) {
     try {
-      return await callProvider(
+      const content = await callProvider(
         'https://openrouter.ai/api/v1/chat/completions',
         openrouterKey,
         OPENROUTER_CARD_MODEL,
@@ -208,6 +209,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
         temperature,
         false,
       );
+      return { content, provider: 'openrouter' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('OpenRouter failed:', msg);
@@ -218,7 +220,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
   // Final fallback: Lovable AI Gateway
   if (lovableKey) {
     try {
-      return await callProvider(
+      const content = await callProvider(
         'https://ai.gateway.lovable.dev/v1/chat/completions',
         lovableKey,
         'google/gemini-2.5-flash',
@@ -228,6 +230,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
         temperature,
         false,
       );
+      return { content, provider: 'lovable' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Lovable AI Gateway failed:', msg);
@@ -543,7 +546,7 @@ Format with clear markdown headings, bullet points, and code blocks. Be comprehe
 Documentation:
 ${text}`;
 
-      const result = await callLLM('You are a technical documentation specialist. Consolidate raw documentation into clean, structured markdown.', prompt);
+      const { content: result, provider } = await callLLM('You are a technical documentation specialist. Consolidate raw documentation into clean, structured markdown.', prompt);
       const trimmed = typeof result === 'string' ? result.trim() : '';
       if (!trimmed) {
         return new Response(JSON.stringify({ error: 'AI returned an empty result' }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -563,7 +566,7 @@ ${text}`;
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
         `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldName}". Still produce the FULL card JSON (all keys). The current text in "${fieldName}" is labeled context above and must be digested like every other field.`;
 
-      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
+      const { content: result, provider } = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
       const { card, parseError } = parseWholeCardJson(result);
       if (parseError || !card) {
         return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -575,7 +578,7 @@ ${text}`;
       }
 
       // Return ONLY the requested field value - client must not apply other fields.
-      return new Response(JSON.stringify({ result: fieldValue, fieldName, wholeCardBuilt: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: fieldValue, fieldName, wholeCardBuilt: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: GENERATE ALL FIELDS ===
@@ -586,13 +589,13 @@ ${text}`;
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
         `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
 
-      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
+      const { content: result, provider } = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
       const { card, parseError } = parseWholeCardJson(result);
       if (parseError || !card) {
         return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      return new Response(JSON.stringify({ result: card }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: card, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: CONVERT / IMPORT ===
@@ -634,7 +637,7 @@ OUTPUT FORMAT:
 
 Return ONLY the JSON object, no explanation.`;
 
-      const result = await callLLM(
+      const { content: result, provider } = await callLLM(
         'You are a character card format conversion expert. You can parse any character format and convert to V2/V3 spec. You NEVER discard information. Respond with valid JSON only.',
         prompt, 4096, 0.3
       );
@@ -674,7 +677,7 @@ ${rawContext ? `\nADDITIONAL RAW CONTEXT (use this as source material — extrac
 
 Write ONLY the variable value — no labels, no quotes around it, no explanation. Be creative and stay consistent with any existing context. If raw context is provided, extract and adapt relevant information for this specific variable.`;
 
-      const result = await callLLM(
+      const { content: result, provider } = await callLLM(
         'You are a creative writer specializing in AI roleplay prompts, scenarios, and character definitions. Generate concise, fitting content for prompt template variables. When given raw context, intelligently extract and distribute relevant information.',
         prompt, 512, 0.8
       );
@@ -723,7 +726,7 @@ ${rawContext ? `\nRAW CONTEXT (use this as primary source material — extract, 
 RESPOND IN VALID JSON FORMAT ONLY. The JSON should have each variable name as a key and the generated content as the value.
 Generate ALL variables listed above. Every variable must have a value. Stay consistent across all variables. If raw context or existing content is provided, use it as the foundation — enhance and flesh out, don't just copy.`;
 
-      const result = await callLLM(
+      const { content: result, provider } = await callLLM(
         'You are a creative writer specializing in AI roleplay prompts, scenarios, lorebook entries, and character definitions. Generate rich, detailed, consistent content for all prompt template variables. When given raw context, intelligently extract and distribute relevant information into appropriate variables. ALWAYS respond with valid JSON only — no markdown, no explanation.',
         prompt, 2048, 0.8
       );

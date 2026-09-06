@@ -25,6 +25,106 @@ Good shape:
 {{char}}: ...
 `;
 
+
+/** CCV2/V3 field bible baked into every character generate call. */
+const CARD_FIELD_BIBLE = `CHARACTER CARD FIELD BIBLE (CCV2/V3 - follow exactly):
+
+You are an EXPERT CHARACTER CARD AUTHOR, not an RP partner. Never mid-scene roleplay in system_prompt.
+Never write {{user}} first-person into personality, description, scenario, creator_notes, or tags.
+Personality/description = {{char}} traits from an authorial/third-person (or {{char}}-centric) POV.
+
+FIELDS & LENGTH BUDGETS (hard ceilings for finished text - stay under):
+- name: character display name. Keep if provided. Budget ~40 chars.
+- description: appearance, background, abilities, key traits. 2-4 paragraphs. Budget <=2000 chars. Authorial POV about {{char}}.
+- personality: {{char}} traits, behavioral patterns, quirks - NOT the user's traits. Prefer concise trait list or short prose. Budget <=1000 chars.
+- scenario: setting/situation framing the chat. Budget <=1000 chars. Do not write as {{user}} diary.
+- first_mes: {{char}} opening message. Use *asterisks for actions* and natural dialogue. Budget <=2000 chars.
+- mes_example: EXACTLY three SillyTavern example blocks:
+  * Each block starts with <START> alone on its own line
+  * Then {{user}}: / {{char}}: labels (never User:, never the real name as a label)
+  * *actions* in single asterisks; multi-line exchanges OK
+  * Prefer richer examples unless personality says quiet/silent
+  Encode as ONE JSON string with real newlines. Budget <=5000 chars.
+- alternate_greetings: JSON array of EXACTLY 3 distinct full opening messages (same style as first_mes). Each <=2000 chars.
+- group_only_greetings: JSON array of 1-3 group-chat openers acknowledging other characters; or [].
+- system_prompt: Instructions FOR the eventual chat model on how to portray THIS character in THIS scenario.
+  Fill LAST in reasoning order (most inferential). Reinforce strong traits (e.g. dominant brat) when the card screams them.
+  NOT mid-scene Venice roleplay. NOT first-person {{user}}. Budget <=1500 chars.
+- post_history_instructions: short after-history reminder for the chat model. Budget <=500 chars.
+- creator_notes: notes for OTHER creators/users on how to use the card. Budget <=1000 chars.
+- tags: comma-separated categorization tags. Budget <=300 chars.
+- nickname: alias if useful; else "".
+- source: array of source URL strings if known; else [].
+- creator: creator handle if known; else "".
+- character_version: version string if useful; else "".
+
+REORGANIZE: ingest ALL labeled current field text even if messy/wrong boxes/overflow. Redistribute into the correct fields. Enrich gaps. Invent ONLY what is missing given context density. Stay consistent across fields.
+`;
+
+const CARD_FIELD_ORDER = [
+  'name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example',
+  'alternate_greetings', 'group_only_greetings', 'creator_notes', 'tags', 'nickname',
+  'source', 'creator', 'character_version', 'post_history_instructions', 'system_prompt',
+];
+
+function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null; parseError: boolean } {
+  if (!raw || typeof raw !== 'string') return { card: null, parseError: true };
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { card: null, parseError: true };
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { card: null, parseError: true };
+    return { card: parsed as Record<string, unknown>, parseError: false };
+  } catch {
+    return { card: null, parseError: true };
+  }
+}
+
+function extractCardField(card: Record<string, unknown>, fieldName: string): unknown {
+  if (!card || typeof card !== 'object') return undefined;
+  if (fieldName in card) return card[fieldName];
+  const data = card.data;
+  if (data && typeof data === 'object' && !Array.isArray(data) && fieldName in (data as Record<string, unknown>)) {
+    return (data as Record<string, unknown>)[fieldName];
+  }
+  return undefined;
+}
+
+function buildWholeCardUserPrompt(existingFields: Record<string, unknown> | null | undefined, isV3: boolean): string {
+  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
+  const contextBlock = contextParts.length > 0
+    ? `LABELED CURRENT CARD TEXT (ingest ALL of it - even messy / wrong boxes / overflow. Reorganize into proper fields):\n${contextParts.join('\n\n')}`
+    : 'No fields filled - create a completely original character from scratch.';
+
+  return `${CARD_FIELD_BIBLE}
+
+${MES_EXAMPLE_FORMAT_RULES}
+
+TASK: Build a COMPLETE proper Character Card as a single JSON object with these keys:
+${CARD_FIELD_ORDER.join(', ')}
+
+${contextBlock}
+
+REASONING ORDER: flesh out name -> description -> personality -> scenario -> first_mes -> mes_example -> alternate_greetings -> group_only_greetings -> creator_notes -> tags -> nickname/source/creator/version -> post_history_instructions -> system_prompt LAST (most inferential instructions for the chat model given the finished card).
+
+OUTPUT RULES:
+- Respond with VALID JSON ONLY (no markdown fences, no commentary).
+- mes_example must be a single string with real newlines and exactly three <START> blocks.
+- alternate_greetings must be an array of exactly 3 strings.
+- group_only_greetings must be an array (1-3 strings preferred; [] if not useful).
+- source must be an array of strings (or []).
+- Respect length budgets so Gen All does not blow limits.
+- Personality = {{char}} traits only. Never {{user}} first-person in personality/description/etc.
+- system_prompt = instructions FOR the chat model, not mid-scene RP.
+${isV3 ? '- Prefer V3 list fields (source, group_only_greetings) as arrays.' : '- Include group_only_greetings as an array when useful; otherwise [].'}`;
+}
+
+const CARD_AUTHOR_SYSTEM = `You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3). You reorganize and enrich incomplete cards into coherent structured JSON. You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt. ALWAYS respond with valid JSON only - no markdown, no explanation.`;
+
+
 function formatExistingFieldValue(value: unknown): string | null {
   if (typeof value === 'string') {
     const t = value.trim();
@@ -57,6 +157,11 @@ function collectContextParts(existingFields: Record<string, unknown> | null | un
   return contextParts;
 }
 
+// Card-authoring models: prefer strong general instruct (GLM/Qwen), not RP/uncensored Venice personas.
+// Documented choice: Venice zai-org-glm-4.7 (GLM-class structured writing). OpenRouter: Llama 3.3 70B Instruct free.
+const VENICE_CARD_MODEL = 'zai-org-glm-4.7';
+const OPENROUTER_CARD_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
+
 async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 4096, temperature = 0.3) {
   const veniceKey = Deno.env.get('VENICE_API_KEY');
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
@@ -65,7 +170,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 409
   // Try Venice first
   if (veniceKey) {
     try {
-      return await callProvider('https://api.venice.ai/api/v1/chat/completions', veniceKey, 'llama-3.3-70b', systemPrompt, userPrompt, maxTokens, temperature);
+      return await callProvider('https://api.venice.ai/api/v1/chat/completions', veniceKey, VENICE_CARD_MODEL, systemPrompt, userPrompt, maxTokens, temperature, true);
     } catch (e) {
       console.error('Venice failed:', e);
     }
@@ -74,7 +179,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 409
   // Fallback to OpenRouter
   if (openrouterKey) {
     try {
-      return await callProvider('https://openrouter.ai/api/v1/chat/completions', openrouterKey, 'meta-llama/llama-3.3-70b-instruct:free', systemPrompt, userPrompt, maxTokens, temperature);
+      return await callProvider('https://openrouter.ai/api/v1/chat/completions', openrouterKey, OPENROUTER_CARD_MODEL, systemPrompt, userPrompt, maxTokens, temperature, false);
     } catch (e) {
       console.error('OpenRouter failed:', e);
     }
@@ -83,7 +188,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 409
   // Final fallback: Lovable AI Gateway
   if (lovableKey) {
     try {
-      return await callProvider('https://ai.gateway.lovable.dev/v1/chat/completions', lovableKey, 'google/gemini-2.5-flash', systemPrompt, userPrompt, maxTokens, temperature);
+      return await callProvider('https://ai.gateway.lovable.dev/v1/chat/completions', lovableKey, 'google/gemini-2.5-flash', systemPrompt, userPrompt, maxTokens, temperature, false);
     } catch (e) {
       console.error('Lovable AI Gateway failed:', e);
       throw e;
@@ -93,22 +198,27 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = 409
   throw new Error('No API keys configured');
 }
 
-async function callProvider(url: string, apiKey: string, model: string, systemPrompt: string, userPrompt: string, maxTokens: number, temperature: number) {
+async function callProvider(url: string, apiKey: string, model: string, systemPrompt: string, userPrompt: string, maxTokens: number, temperature: number, isVenice = false) {
+  const payload: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    max_tokens: maxTokens,
+    temperature,
+  };
+  // Disable Venice default uncensored/RP system prompt for structured card authoring.
+  if (isVenice) {
+    payload.venice_parameters = { include_venice_system_prompt: false };
+  }
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: maxTokens,
-      temperature,
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -230,91 +340,47 @@ ${text}`;
     }
 
     // === CHARACTER CARD: GENERATE SINGLE FIELD ===
+    // Whole-card rebuild then slice: ingest ALL labeled fields (including F), return ONLY F.
     if (action === 'generate-field') {
-      const { fieldName, fieldDescription, existingFields, keywords } = body;
+      const { fieldName, existingFields, specVersion } = body;
       if (!fieldName) {
         return new Response(JSON.stringify({ error: 'fieldName is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const contextParts = collectContextParts(existingFields);
-
-      let extraRules = '';
-      let maxTokens = 2048;
-      if (fieldName === 'mes_example') {
-        maxTokens = 3500;
-        extraRules = `\n\n${MES_EXAMPLE_FORMAT_RULES}\nWrite ONLY the mes_example content — no JSON, no markdown fences, no field labels.`;
-      } else if (fieldName === 'alternate_greetings' || fieldName === 'group_only_greetings') {
-        maxTokens = 2048;
-        extraRules = `\n\nReturn EXACTLY 3 greeting messages as a JSON array of strings (["greeting1","greeting2","greeting3"]). Each greeting should be a full opening message with *actions* and natural dialogue, steered from the character context. No markdown fences.`;
-      } else if (fieldName === 'first_mes') {
-        extraRules = `\n\nWrite a vivid opening message using *asterisks for actions* and natural dialogue (no wrapping the whole message in quotes). Stay consistent with the character.`;
-      }
-
-      const prompt = `Generate content for the "${fieldName}" field of a character card.
-${fieldDescription ? `Field purpose: ${fieldDescription}` : ''}
-${keywords ? `Keywords/seed content to build from: ${keywords}` : ''}
-
-${contextParts.length > 0 ? `FULL CHARACTER CONTEXT (use ALL of this to inform your generation — stay consistent, expand on existing details, never contradict):\n${contextParts.join('\n')}` : 'No other fields filled yet — create something original and compelling.'}
-
-IMPORTANT: Build upon and expand the existing character context. If keywords/seed text is provided, use them as the foundation but enhance and flesh out the content significantly. Write ONLY the field content — no labels, no markdown headers, no explanation.${extraRules}
-${fieldName !== 'mes_example' && fieldName !== 'alternate_greetings' && fieldName !== 'group_only_greetings' ? 'For dialogue/message fields, use *asterisks for actions* and natural spoken dialogue (not Name: labels).' : ''}`;
-
-      const result = await callLLM(
-        'You are an expert character card creator for AI roleplay platforms (SillyTavern, TavernAI, Chub.ai). You write vivid, detailed, engaging character definitions. Always stay consistent with any existing character context provided. Never contradict existing fields — build upon them.',
-        prompt, maxTokens, 0.8
-      );
-
-      return new Response(JSON.stringify({ result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    // === CHARACTER CARD: GENERATE ALL FIELDS ===
-    if (action === 'generate-all') {
-      const { existingFields, specVersion } = body;
-
-      const allFields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes', 'tags', 'nickname', 'source', 'alternate_greetings', 'group_only_greetings'];
-
-      const contextParts = collectContextParts(existingFields, allFields);
       const isV3 = specVersion === 'v3' || specVersion === 'V3';
+      const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
+        `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldName}". Still produce the FULL card JSON (all keys). The current text in "${fieldName}" is labeled context above and must be digested like every other field.`;
 
-      const prompt = `Generate a COMPLETE character card. Fill ALL of these fields: ${allFields.join(', ')}
-
-${contextParts.length > 0 ? `EXISTING CONTENT (use as foundation — expand, enhance, and flesh out each field. Treat any existing text as keywords/seeds to build from. Spread details into the most appropriate fields. Do NOT simply copy existing text — improve it):\n${contextParts.join('\n')}` : 'No fields filled — create a completely original character.'}
-
-RESPOND IN VALID JSON FORMAT ONLY. The JSON should have each field name as a key and the generated content as the value.
-
-Field guidelines:
-- name: A memorable character name (if provided, keep it)
-- description: 2-4 paragraphs covering appearance, background, abilities, and key traits
-- personality: Comma-separated personality traits with brief explanations
-- scenario: The setting/situation where the user meets this character
-- first_mes: The character's opening message with *actions* and natural dialogue
-- mes_example: ${MES_EXAMPLE_FORMAT_RULES}
-  Encode mes_example as a single JSON string with real line breaks between <START> blocks. Never collapse the three blocks onto one line.
-- system_prompt: Instructions for the AI on how to roleplay this character
-- post_history_instructions: Brief reminder inserted after chat history
-- creator_notes: Notes for other users about how to best use this character
-- tags: Comma-separated tags for categorization
-- nickname: Alternative name or alias
-- source: Array of source URL strings if known; otherwise []
-- alternate_greetings: REQUIRED — a JSON array of EXACTLY 3 distinct alternate opening messages (full greetings with *actions* and dialogue), each usable instead of first_mes. Never leave this empty or as a single string.
-- group_only_greetings: A JSON array of 1-3 group-chat greetings that acknowledge other characters are present. Prefer a non-empty array when useful; otherwise [].
-
-Generate ALL fields. Write engaging, detailed content that is consistent across all fields. Do not leave alternate_greetings blank when generation succeeds.${isV3 ? ' Prefer filling V3 list fields (source, group_only_greetings) as arrays.' : ' Include group_only_greetings as an array when you can honestly invent useful group openers; otherwise [].'}`;
-
-      const result = await callLLM(
-        'You are an expert character card creator. Create rich, detailed, engaging characters for AI roleplay. ALWAYS respond with valid JSON only — no markdown, no explanation, just the JSON object. Generate ALL requested fields, including alternate_greetings as an array of exactly 3 strings and mes_example with three <START> blocks.',
-        prompt, 4096, 0.8
-      );
-
-      let parsed: Record<string, unknown> = {};
-      try {
-        const jsonMatch = result.match(/\{[\s\S]*\}/);
-        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-      } catch {
+      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, 8192, 0.7);
+      const { card, parseError } = parseWholeCardJson(result);
+      if (parseError || !card) {
         return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      return new Response(JSON.stringify({ result: parsed }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const fieldValue = extractCardField(card, String(fieldName));
+      if (fieldValue === undefined) {
+        return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldName}` }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // Return ONLY the requested field value - client must not apply other fields.
+      return new Response(JSON.stringify({ result: fieldValue, fieldName, wholeCardBuilt: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // === CHARACTER CARD: GENERATE ALL FIELDS ===
+    // Same whole-card rebuild; client applies all fields like import.
+    if (action === 'generate-all') {
+      const { existingFields, specVersion } = body;
+      const isV3 = specVersion === 'v3' || specVersion === 'V3';
+      const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
+        `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
+
+      const result = await callLLM(CARD_AUTHOR_SYSTEM, prompt, 8192, 0.7);
+      const { card, parseError } = parseWholeCardJson(result);
+      if (parseError || !card) {
+        return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      return new Response(JSON.stringify({ result: card }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: CONVERT / IMPORT ===

@@ -4,6 +4,9 @@ import {
   parseAiStringList,
   countMesExampleStarts,
   MES_EXAMPLE_FORMAT_RULES,
+  parseWholeCardJson,
+  extractCardField,
+  applyGenerateFieldResult,
 } from "@/lib/cardAiFormat";
 
 describe("cardAiFormat", () => {
@@ -48,5 +51,45 @@ describe("cardAiFormat", () => {
   it("accepts JSON array alternate greetings", () => {
     const items = parseAiStringList(['First greeting', 'Second, with comma', 'Third'], { max: 3 });
     expect(items).toEqual(['First greeting', 'Second, with comma', 'Third']);
+  });
+
+  it("parses whole-card JSON from fenced AI output", () => {
+    const raw = "Here you go:\n```json\n{\"name\":\"Riley\",\"personality\":\"dominant brat\",\"system_prompt\":\"Stay in character as Riley.\"}\n```\n";
+    const { card, parseError } = parseWholeCardJson(raw);
+    expect(parseError).toBe(false);
+    expect(card?.name).toBe("Riley");
+    expect(card?.personality).toBe("dominant brat");
+  });
+
+  it("extracts a single field from a whole-card object", () => {
+    const card = {
+      name: "Riley",
+      description: "A smug CEO",
+      personality: "dominant brat",
+      system_prompt: "Portray Riley as a dominant brat.",
+    };
+    expect(extractCardField(card, "personality")).toBe("dominant brat");
+    expect(extractCardField(card, "missing")).toBeUndefined();
+  });
+
+  it("applyGenerateFieldResult slices whole-card payloads to one field", () => {
+    const whole = {
+      name: "Riley",
+      description: "desc",
+      personality: "dominant brat",
+      scenario: "office",
+      first_mes: "hi",
+      mes_example: "<START>",
+      system_prompt: "instructions only",
+    };
+    const { value, slicedFromWholeCard } = applyGenerateFieldResult("personality", whole);
+    expect(slicedFromWholeCard).toBe(true);
+    expect(value).toBe("dominant brat");
+  });
+
+  it("applyGenerateFieldResult keeps plain field strings untouched", () => {
+    const { value, slicedFromWholeCard } = applyGenerateFieldResult("personality", "dominant brat");
+    expect(slicedFromWholeCard).toBe(false);
+    expect(value).toBe("dominant brat");
   });
 });

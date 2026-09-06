@@ -105,3 +105,53 @@ export function countMesExampleStarts(text: string): number {
   const matches = normalizeAiMultiline(text).match(/^<START>\s*$/gm);
   return matches ? matches.length : 0;
 }
+
+
+/** Parse a whole-card JSON object from an AI response (fences / prose tolerated). */
+export function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null; parseError: boolean } {
+  if (!raw || typeof raw !== 'string') return { card: null, parseError: true };
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { card: null, parseError: true };
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { card: null, parseError: true };
+    return { card: parsed as Record<string, unknown>, parseError: false };
+  } catch {
+    return { card: null, parseError: true };
+  }
+}
+
+/** Pull one field from a whole-card object (supports optional nested data). */
+export function extractCardField(card: Record<string, unknown>, fieldName: string): unknown {
+  if (!card || typeof card !== 'object') return undefined;
+  if (fieldName in card) return card[fieldName];
+  const data = card.data;
+  if (data && typeof data === 'object' && !Array.isArray(data) && fieldName in (data as Record<string, unknown>)) {
+    return (data as Record<string, unknown>)[fieldName];
+  }
+  return undefined;
+}
+
+/**
+ * Apply AI generate-field result: ONLY the requested field changes.
+ * If the API mistakenly returns a whole card object, slice to fieldName.
+ */
+export function applyGenerateFieldResult(
+  fieldName: string,
+  result: unknown,
+): { value: unknown; slicedFromWholeCard: boolean } {
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const obj = result as Record<string, unknown>;
+    const known = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt'];
+    const hits = known.filter((k) => k in obj).length;
+    if (hits >= 3 || fieldName in obj) {
+      const extracted = extractCardField(obj, fieldName);
+      if (extracted !== undefined) return { value: extracted, slicedFromWholeCard: true };
+    }
+  }
+  return { value: result, slicedFromWholeCard: false };
+}
+

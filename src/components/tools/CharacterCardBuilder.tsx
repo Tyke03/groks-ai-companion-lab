@@ -32,7 +32,7 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
-import { normalizeAiMultiline, parseAiStringList } from "@/lib/cardAiFormat";
+import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult } from "@/lib/cardAiFormat";
 import {
   createNewCard,
   deleteCard,
@@ -425,18 +425,32 @@ export const CharacterCardBuilder = () => {
     }
     setGeneratingField(fieldName);
     try {
+      // Pass EVERY labeled field (including the target) so the edge function can rebuild the whole card, then slice.
       const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: { action: "generate-field", fieldName, fieldDescription: fieldDescriptions[fieldName], existingFields: card, keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined },
+        body: {
+          action: "generate-field",
+          fieldName,
+          fieldDescription: fieldDescriptions[fieldName],
+          existingFields: card,
+          specVersion,
+          keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined,
+        },
       });
       if (error) throw error;
+      if (data?.parseError) {
+        toast({ title: "Partial result", description: "AI rebuilt the card but the response could not be parsed for this field.", variant: "destructive" });
+        return;
+      }
       if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
+        // Safety: if a whole card object sneaks through, apply ONLY fieldName.
+        const { value } = applyGenerateFieldResult(String(fieldName), data.result);
         if (ARRAY_FIELDS.has(fieldName)) {
           const max = fieldName === "alternate_greetings" ? 3 : undefined;
-          updateList(fieldName, parseAiStringList(data.result, { max }));
+          updateList(fieldName, parseAiStringList(value, { max }));
         } else if (fieldName === "mes_example" || fieldName === "first_mes") {
-          updateField(fieldName, normalizeAiMultiline(String(data.result)));
+          updateField(fieldName, normalizeAiMultiline(String(value ?? "")));
         } else {
-          updateField(fieldName, typeof data.result === "string" ? data.result : String(data.result));
+          updateField(fieldName, typeof value === "string" ? value : value == null ? "" : String(value));
         }
       }
     } catch (err) {

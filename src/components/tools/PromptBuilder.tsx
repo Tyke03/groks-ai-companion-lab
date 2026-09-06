@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
+import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
 
 const customKey = "ai-companion-hub-custom-prompts";
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -30,6 +31,9 @@ export const PromptBuilder = () => {
   const [importText, setImportText] = useState("");
   const [showRawContext, setShowRawContext] = useState(false);
   const [rawContext, setRawContext] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "restored" | "saved">("idle");
+  const skipStatusFlipRef = useRef(false);
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const ai = useAiBackendStatus();
@@ -51,12 +55,27 @@ export const PromptBuilder = () => {
   }, [allTemplates]);
 
   useEffect(() => {
+    let customs: PromptTemplate[] = [];
     try {
       const stored = JSON.parse(localStorage.getItem(customKey) || "[]");
-      setCustomTemplates(normalizeLocalTemplates(stored));
+      customs = normalizeLocalTemplates(stored);
+      setCustomTemplates(customs);
     } catch {
       setCustomTemplates([]);
     }
+
+    const draft = loadPromptDraft();
+    if (draft) {
+      const all = [...promptTemplates, ...customs];
+      const match = all.find((template) => template.id === draft.selectedTemplateId);
+      if (match) setSelectedTemplate(match);
+      setVariables(draft.variables);
+      setRawContext(draft.rawContext);
+      setShowRawContext(draft.showRawContext || Boolean(draft.rawContext.trim()));
+      setDraftStatus("restored");
+      skipStatusFlipRef.current = true;
+    }
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -75,6 +94,25 @@ export const PromptBuilder = () => {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    savePromptDraft({
+      selectedTemplateId: selectedTemplate.id,
+      variables,
+      rawContext,
+      showRawContext,
+    });
+    if (skipStatusFlipRef.current) {
+      skipStatusFlipRef.current = false;
+      return;
+    }
+    const meaningful =
+      Boolean(rawContext.trim()) ||
+      showRawContext ||
+      Object.values(variables).some((value) => value.trim());
+    if (meaningful) setDraftStatus("saved");
+  }, [hydrated, selectedTemplate.id, variables, rawContext, showRawContext]);
 
 
   useEffect(() => {
@@ -241,6 +279,11 @@ export const PromptBuilder = () => {
         <p className="text-sm text-muted-foreground">
           Draft locally, then paste into SillyTavern or your host. Fill example values works offline; AI generate is optional.
         </p>
+        {draftStatus !== "idle" && (
+          <p className="mt-2 text-xs text-muted-foreground" data-testid="prompt-draft-status">
+            {draftStatus === "restored" ? "Draft restored from this browser." : "Draft saved in this browser."}
+          </p>
+        )}
       </div>
 
       {ai.status === "checking" && (

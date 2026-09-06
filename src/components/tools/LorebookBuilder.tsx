@@ -37,6 +37,7 @@ const LorebookBuilder = () => {
   const [pendingImport, setPendingImport] = useState<{
     entries: LorebookEntry[];
     importedName: string | null;
+    normalizedFromSt?: boolean;
   } | null>(null);
   const [cardSlots, setCardSlots] = useState<StoredCardSlot[]>([]);
   const { toast } = useToast();
@@ -159,7 +160,13 @@ const LorebookBuilder = () => {
     });
   };
 
-  const applyImport = (mode: "merge" | "replace", imported: LorebookEntry[], importedName: string | null) => {
+  const applyImport = (
+    mode: "merge" | "replace",
+    imported: LorebookEntry[],
+    importedName: string | null,
+    options?: { normalizedFromSt?: boolean },
+  ) => {
+    const normalizedFromSt = Boolean(options?.normalizedFromSt);
     patchBook((previous) => {
       const nextEntries =
         mode === "merge"
@@ -179,12 +186,17 @@ const LorebookBuilder = () => {
     setSelectedId("");
     setImportText("");
     setPendingImport(null);
+    const actionTitle = mode === "merge" ? "Merged" : "Replaced";
     toast({
-      title: mode === "merge" ? "Merged" : "Replaced",
+      title: normalizedFromSt ? `Normalized & ${actionTitle}` : actionTitle,
       description:
         mode === "merge"
-          ? `${imported.length} lorebook entries merged; prior entries kept.`
-          : `${imported.length} lorebook entries loaded (previous entries replaced).`,
+          ? normalizedFromSt
+            ? `${imported.length} SillyTavern nested entries normalized and merged; prior entries kept.`
+            : `${imported.length} lorebook entries merged; prior entries kept.`
+          : normalizedFromSt
+            ? `${imported.length} SillyTavern nested entries normalized and loaded (previous entries replaced).`
+            : `${imported.length} lorebook entries loaded (previous entries replaced).`,
     });
   };
 
@@ -194,17 +206,18 @@ const LorebookBuilder = () => {
       const shape = detectLorebookImportShape(parsed);
       const imported = parseImportedEntries(parsed);
       const importedName = extractImportedName(parsed);
-      if (shape === "sillytavern-data") {
+      const normalizedFromSt = shape === "sillytavern-data";
+      if (normalizedFromSt && lorebookHasContent(book) && imported.length > 0) {
         toast({
           title: "Normalized SillyTavern import",
-          description: "Found entries under data.entries and flattened them for this workbench.",
+          description: "Found entries under data.entries — choose Merge or Replace below.",
         });
       }
       if (lorebookHasContent(book) && imported.length > 0) {
-        setPendingImport({ entries: imported, importedName });
+        setPendingImport({ entries: imported, importedName, normalizedFromSt });
         return;
       }
-      applyImport("merge", imported, importedName);
+      applyImport("merge", imported, importedName, { normalizedFromSt });
     } catch (error) {
       toast({
         title: "Invalid lorebook JSON",
@@ -490,7 +503,7 @@ const LorebookBuilder = () => {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     onClick={() =>
-                      applyImport("merge", pendingImport.entries, pendingImport.importedName)
+                      applyImport("merge", pendingImport.entries, pendingImport.importedName, { normalizedFromSt: pendingImport.normalizedFromSt })
                     }
                   >
                     <Upload className="h-4 w-4" /> Merge import
@@ -498,7 +511,7 @@ const LorebookBuilder = () => {
                   <Button
                     variant="destructive"
                     onClick={() =>
-                      applyImport("replace", pendingImport.entries, pendingImport.importedName)
+                      applyImport("replace", pendingImport.entries, pendingImport.importedName, { normalizedFromSt: pendingImport.normalizedFromSt })
                     }
                   >
                     Replace all

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +18,10 @@ import {
   stashWorkbenchBridge,
   toolsTabPath,
 } from "@/lib/workbenchBridges";
+import {
+  loadDocConsolidatorDraft,
+  saveDocConsolidatorDraft,
+} from "@/lib/docConsolidatorDraftStorage";
 
 const MAX_CHARS = 32000;
 
@@ -79,11 +83,52 @@ export const DocConsolidator = () => {
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "restored" | "saved">("idle");
+  const skipStatusFlipRef = useRef(false);
   const { toast } = useToast();
   const navigate = useNavigate();
   const ai = useAiBackendStatus();
   const aiUnavailable = ai.status === "unavailable";
   const aiReady = ai.status === "available";
+
+  useEffect(() => {
+    const draft = loadDocConsolidatorDraft();
+    if (draft) {
+      setServiceName(draft.serviceName);
+      setCustomName(draft.customName);
+      setInputText(draft.inputText);
+      setDocUrl(draft.docUrl);
+      setResult(draft.result);
+      setResultMode(draft.resultMode);
+      setDraftStatus("restored");
+      skipStatusFlipRef.current = true;
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveDocConsolidatorDraft({
+      serviceName,
+      customName,
+      inputText,
+      docUrl,
+      result,
+      resultMode,
+    });
+    if (skipStatusFlipRef.current) {
+      skipStatusFlipRef.current = false;
+      return;
+    }
+    const meaningful =
+      Boolean(serviceName.trim()) ||
+      Boolean(customName.trim()) ||
+      Boolean(inputText.trim()) ||
+      Boolean(docUrl.trim()) ||
+      Boolean(result.trim());
+    if (meaningful) setDraftStatus("saved");
+  }, [hydrated, serviceName, customName, inputText, docUrl, result, resultMode]);
 
   const effectiveName = serviceName === "custom" ? customName : serviceName;
   const charCount = inputText.length;
@@ -255,6 +300,13 @@ export const DocConsolidator = () => {
           and <strong className="text-foreground font-medium">AI Consolidate</strong> (optional; needs a configured backend).
           No invented NSFW or payment claims.
         </p>
+        {draftStatus !== "idle" && (
+          <p className="mt-2 text-xs text-muted-foreground" data-testid="doc-draft-status">
+            {draftStatus === "restored"
+              ? "Draft restored from this browser (auto-saved)."
+              : "Draft auto-saved in this browser. Save Locally still creates a named checkpoint."}
+          </p>
+        )}
       </div>
 
       {ai.status === "checking" && (

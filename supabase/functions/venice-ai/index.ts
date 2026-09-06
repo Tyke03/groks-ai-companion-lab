@@ -80,6 +80,108 @@ function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null
   }
 }
 
+/** True when raw looks like an unfinished JSON object (common Venice truncation). */
+function looksLikeTruncatedCardJson(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return true;
+  const t = raw.trim();
+  if (!t.includes('{')) return true;
+  const opens = (t.match(/\{/g) || []).length;
+  const closes = (t.match(/\}/g) || []).length;
+  if (closes < opens) return true;
+  if (!/\}\s*$/.test(t) && !/```\s*$/.test(t)) return true;
+  return false;
+}
+
+/**
+ * Provider cascade that only accepts parseable whole-card JSON.
+ * Venice often returns truncated/invalid JSON; treat that as a soft failure and fall through.
+ */
+async function callLLMForWholeCard(
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens = CARD_JSON_MAX_TOKENS,
+  temperature = 0.7,
+): Promise<{ content: string; provider: string; card: Record<string, unknown> }> {
+  const veniceKey = Deno.env.get('VENICE_API_KEY');
+  const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
+  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  const failures: string[] = [];
+
+  const accept = (content: string, provider: string) => {
+    const { card, parseError } = parseWholeCardJson(content);
+    if (!parseError && card) return { content, provider, card };
+    const why = looksLikeTruncatedCardJson(content) ? 'truncated/incomplete JSON' : 'invalid JSON';
+    throw new Error(`${why} (${content?.length || 0} chars)`);
+  };
+
+  if (veniceKey) {
+    for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
+      try {
+        const content = await callVeniceStreaming(
+          veniceKey,
+          VENICE_CARD_MODEL,
+          systemPrompt,
+          userPrompt,
+          maxTokens,
+          temperature,
+        );
+        return accept(content, 'venice');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Venice card attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
+        failures.push(`Venice: ${msg}`);
+        const retryable = /stall|hung|timeout|wall|network|connection|abort|fetch|5\d\d|truncated|incomplete|invalid JSON/i.test(msg);
+        if (!retryable || attempt >= VENICE_MAX_ATTEMPTS) break;
+      }
+    }
+  }
+
+  if (openrouterKey) {
+    try {
+      const content = await callProvider(
+        'https://openrouter.ai/api/v1/chat/completions',
+        openrouterKey,
+        OPENROUTER_CARD_MODEL,
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        false,
+      );
+      return accept(content, 'openrouter');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('OpenRouter card failed:', msg);
+      failures.push(`OpenRouter: ${msg}`);
+    }
+  }
+
+  if (lovableKey) {
+    try {
+      const content = await callProvider(
+        'https://ai.gateway.lovable.dev/v1/chat/completions',
+        lovableKey,
+        'google/gemini-2.5-flash',
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        false,
+      );
+      return accept(content, 'lovable');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Lovable card failed:', msg);
+      failures.push(`Lovable: ${msg}`);
+    }
+  }
+
+  if (failures.length === 0) {
+    throw new Error('No API keys configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY)');
+  }
+  throw new Error(`All LLM providers failed whole-card JSON. ${failures.join(' | ')}`);
+}
+
 function extractCardField(card: Record<string, unknown>, fieldName: string): unknown {
   if (!card || typeof card !== 'object') return undefined;
   if (fieldName in card) return card[fieldName];
@@ -160,7 +262,7 @@ function collectContextParts(existingFields: Record<string, unknown> | null | un
 const VENICE_CARD_MODEL = 'zai-org-glm-4.7-flash';
 const OPENROUTER_CARD_MODEL = 'google/gemma-4-31b-it:free';
 /** No chunk for this long => hung (not a blunt hard kill while tokens are flowing). */
-const VENICE_STALL_MS = 14_000;
+const VENICE_STALL_MS = 20_000;
 /** Absolute ceiling even if chunks keep arriving (edge-friendly). */
 const VENICE_MAX_WALL_MS = 110_000;
 /** One Venice retry after stall/hung/connection death, then OpenRouter -> Lovable. */
@@ -566,11 +668,7 @@ ${text}`;
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
         `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldName}". Still produce the FULL card JSON (all keys). The current text in "${fieldName}" is labeled context above and must be digested like every other field.`;
 
-      const { content: result, provider } = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
-      const { card, parseError } = parseWholeCardJson(result);
-      if (parseError || !card) {
-        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
+      const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
       const fieldValue = extractCardField(card, String(fieldName));
       if (fieldValue === undefined) {
@@ -589,11 +687,7 @@ ${text}`;
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
         `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
 
-      const { content: result, provider } = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
-      const { card, parseError } = parseWholeCardJson(result);
-      if (parseError || !card) {
-        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
+      const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
       return new Response(JSON.stringify({ result: card, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

@@ -569,12 +569,12 @@ ${text}`;
       const { content: result, provider } = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
       const { card, parseError } = parseWholeCardJson(result);
       if (parseError || !card) {
-        return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       const fieldValue = extractCardField(card, String(fieldName));
       if (fieldValue === undefined) {
-        return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldName}` }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldName}`, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       // Return ONLY the requested field value - client must not apply other fields.
@@ -592,7 +592,7 @@ ${text}`;
       const { content: result, provider } = await callLLM(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
       const { card, parseError } = parseWholeCardJson(result);
       if (parseError || !card) {
-        return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       return new Response(JSON.stringify({ result: card, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -647,7 +647,7 @@ Return ONLY the JSON object, no explanation.`;
         const jsonMatch = result.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       } catch {
-        return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       return new Response(JSON.stringify({ result: parsed }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -736,7 +736,7 @@ Generate ALL variables listed above. Every variable must have a value. Stay cons
         const jsonMatch = result.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       } catch {
-        return new Response(JSON.stringify({ result, parseError: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       return new Response(JSON.stringify({ result: parsed }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

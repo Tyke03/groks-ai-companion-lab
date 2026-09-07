@@ -4,6 +4,9 @@ import {
   unwrapCardFields,
   mapCardFieldsToVariables,
   formatCardContextLabeled,
+  formatCompactCardContext,
+  trimPromptRawContext,
+  PROMPT_RAW_CONTEXT_MAX_CHARS,
 } from "@/lib/workbenchCardContext";
 import { emptyCardData } from "@/lib/cardTypes";
 import { detectCardFormat, importCard } from "@/lib/cardCodec";
@@ -72,6 +75,35 @@ describe("workbench card populate parsing", () => {
     expect(text).toContain("# Workbench card: Echo");
     expect(text).toContain("## personality");
     expect(text).toContain("curious");
+  });
+
+  it("formats compact card context with capped core fields only", () => {
+    const card = emptyCardData();
+    card.name = "Nova";
+    card.description = "D".repeat(2000);
+    card.personality = "bold";
+    card.scenario = "station";
+    card.first_mes = "Hello";
+    card.tags = "sci-fi, pilot";
+    card.mes_example = "should not appear in compact";
+    card.creator_notes = "also excluded";
+    const text = formatCompactCardContext(card, "Nova");
+    expect(text).toContain("# Workbench card: Nova");
+    expect(text).toContain("## description");
+    expect(text).toContain("## personality");
+    expect(text).toContain("## tags");
+    expect(text).not.toContain("mes_example");
+    expect(text).not.toContain("creator_notes");
+    expect(text).not.toContain("should not appear");
+    expect(text.length).toBeLessThan(5000);
+    expect(text).toContain("…");
+  });
+
+  it("trims oversized prompt rawContext", () => {
+    const huge = "x".repeat(PROMPT_RAW_CONTEXT_MAX_CHARS + 500);
+    const trimmed = trimPromptRawContext(huge);
+    expect(trimmed.length).toBeLessThanOrEqual(PROMPT_RAW_CONTEXT_MAX_CHARS);
+    expect(trimmed.endsWith("…")).toBe(true);
   });
 });
 

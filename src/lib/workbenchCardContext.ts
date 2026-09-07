@@ -106,6 +106,57 @@ export function formatSlotContext(slot: StoredCardSlot): string {
   return formatCardContextLabeled(slot.card, slot.label);
 }
 
+
+/** Caps for Prompt Builder AI context - avoid dumping full card JSON into rate-limited LLM calls. */
+const COMPACT_FIELD_CAPS: Record<string, number> = {
+  name: 80,
+  description: 1200,
+  personality: 800,
+  scenario: 800,
+  first_mes: 800,
+  tags: 200,
+};
+
+const COMPACT_ORDER = ["name", "description", "personality", "scenario", "first_mes", "tags"] as const;
+
+function capText(value: string, max: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+/**
+ * Compact labeled summary for Prompt Builder rawContext / Gen.
+ * Only core fields, length-capped - not the full workbench card dump.
+ */
+export function formatCompactCardContext(card: CardData | Record<string, unknown>, label?: string): string {
+  const lines: string[] = [];
+  if (label) lines.push(`# Workbench card: ${label}`);
+  for (const key of COMPACT_ORDER) {
+    const raw = (card as Record<string, unknown>)[key];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const max = COMPACT_FIELD_CAPS[key] ?? 400;
+    lines.push(`## ${key}`);
+    lines.push(capText(raw, max));
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+export function formatSlotContextCompact(slot: StoredCardSlot): string {
+  return formatCompactCardContext(slot.card, slot.label);
+}
+
+/** Client-side rawContext cap before invoke (server also caps). */
+export const PROMPT_RAW_CONTEXT_MAX_CHARS = 7500;
+
+export function trimPromptRawContext(raw: string, max = PROMPT_RAW_CONTEXT_MAX_CHARS): string {
+  const trimmed = raw.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+
 export function formatSlotJson(slot: StoredCardSlot): string {
   const { envelope } = buildV2Envelope(slot.card, slot.preserved ?? emptyPreserved());
   return JSON.stringify(envelope, null, 2);

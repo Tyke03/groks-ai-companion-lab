@@ -16,8 +16,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
-import { formatLlmCascadeError } from "@/lib/llmErrors";
-import { mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
+import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
+import { formatSlotContextCompact, mapCardFieldsToVariables, parsePopulateCardJson, trimPromptRawContext } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
 
 const customKey = "ai-companion-hub-custom-prompts";
@@ -167,6 +167,7 @@ export const PromptBuilder = () => {
     }
     setGeneratingVar(varName);
     try {
+      const trimmedContext = trimPromptRawContext(rawContext);
       const { data, error } = await supabase.functions.invoke("venice-ai", {
         body: {
           action: "generate-prompt-variable",
@@ -174,10 +175,14 @@ export const PromptBuilder = () => {
           variableDescription: varDef?.description || "",
           templateContext: selectedTemplate.template,
           existingVariables: variables,
-          rawContext: rawContext.trim() || undefined,
+          rawContext: trimmedContext || undefined,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error) {
+        toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
+        return;
+      }
       if (data?.result) setVariables((prev) => ({ ...prev, [varName]: data.result }));
     } catch (err) {
       toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate."), variant: "destructive" });
@@ -193,6 +198,7 @@ export const PromptBuilder = () => {
     }
     setGeneratingAll(true);
     try {
+      const trimmedContext = trimPromptRawContext(rawContext);
       const { data, error } = await supabase.functions.invoke("venice-ai", {
         body: {
           action: "generate-all-prompt-variables",
@@ -206,10 +212,14 @@ export const PromptBuilder = () => {
             placeholder: v.placeholder,
           })),
           existingVariables: variables,
-          rawContext: rawContext.trim() || undefined,
+          rawContext: trimmedContext || undefined,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error && !data?.result) {
+        toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
+        return;
+      }
       if (data?.result && typeof data.result === "object") {
         setVariables((prev) => ({ ...prev, ...data.result }));
         toast({ title: "Generated", description: `Filled ${Object.keys(data.result).length} variables.` });
@@ -261,12 +271,14 @@ export const PromptBuilder = () => {
   };
 
   const handleWorkbenchCardPick = (pick: WorkbenchCardPick) => {
-    const filled = applyCardFields(pick.fields, true, pick.contextText);
+    // Compact labeled summary (not full card JSON dump) keeps prompt-var Gen under rate limits.
+    const compact = formatSlotContextCompact(pick.slot);
+    const filled = applyCardFields(pick.fields, true, compact);
     toast({
       title: "Workbench card applied",
       description: filled > 0
-        ? `Filled ${filled} variables from “${pick.slot.label}” and added labeled fields to raw context.`
-        : `Added “${pick.slot.label}” labeled fields to raw context.`,
+        ? `Filled ${filled} variables from "${pick.slot.label}" and added a compact card summary to raw context.`
+        : `Added "${pick.slot.label}" compact summary to raw context.`,
     });
   };
 

@@ -33,3 +33,29 @@ export function formatLlmCascadeError(raw: unknown): string {
   if (/429|rate.?limit/i.test(msg)) return "Venice rate-limited; try again in a moment.";
   return msg;
 }
+
+const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+/** Prefer edge JSON `{ error }` over opaque Supabase "non-2xx" invoke messages. */
+export async function edgeInvokeError(error: unknown, data: unknown): Promise<string> {
+  if (data && typeof data === "object" && data !== null && "error" in data) {
+    const e = (data as { error?: unknown }).error;
+    if (e != null && String(e).trim()) return String(e);
+  }
+  const ctx = error && typeof error === "object" && error !== null && "context" in error
+    ? (error as { context?: unknown }).context
+    : undefined;
+  if (ctx && typeof ctx === "object" && ctx !== null && "json" in ctx && typeof (ctx as { json: () => Promise<unknown> }).json === "function") {
+    try {
+      const body = await (ctx as { json: () => Promise<unknown> }).json();
+      if (body && typeof body === "object" && body !== null && "error" in body) {
+        const e = (body as { error?: unknown }).error;
+        if (e != null && String(e).trim()) return String(e);
+      }
+    } catch {
+      // ignore body parse failures
+    }
+  }
+  const msg = errMsg(error);
+  return msg || "Edge function failed";
+}

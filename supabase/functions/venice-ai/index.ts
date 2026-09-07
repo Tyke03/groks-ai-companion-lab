@@ -296,8 +296,24 @@ function formatCascadeFailure(kind: 'whole-card' | 'generic', failures: string[]
   return `All LLM providers failed. ${joined}`;
 }
 const CARD_JSON_MAX_TOKENS = 4096;
+/** Prompt Builder var gen: smaller completions than whole-card JSON (do not inherit CARD_JSON_MAX_TOKENS). */
+const PROMPT_VAR_MAX_TOKENS = 512;
+const PROMPT_ALL_VARS_MAX_TOKENS = 2048;
+/** Cap rawContext injected into prompt-var prompts (~6–8k chars). */
+const RAW_CONTEXT_MAX_CHARS = 7500;
+/** Fast/cheap models for prompt-var path (same flash stack; separate constants so card defaults cannot silently apply). */
+const VENICE_PROMPT_MODEL = VENICE_CARD_MODEL;
+const OPENROUTER_PROMPT_MODEL = OPENROUTER_CARD_MODEL;
 
-async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CARD_JSON_MAX_TOKENS, temperature = 0.3) {
+function trimRawContext(raw: unknown, max = RAW_CONTEXT_MAX_CHARS): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CARD_JSON_MAX_TOKENS, temperature = 0.3, models?: { venice?: string; openrouter?: string }) {
   const veniceKey = Deno.env.get('VENICE_API_KEY');
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
   const lovableKey = Deno.env.get('LOVABLE_API_KEY');
@@ -309,7 +325,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
       try {
         const content = await callVeniceStreaming(
           veniceKey,
-          VENICE_CARD_MODEL,
+          models?.venice || VENICE_CARD_MODEL,
           systemPrompt,
           userPrompt,
           maxTokens,
@@ -337,7 +353,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
       const content = await callProvider(
         'https://openrouter.ai/api/v1/chat/completions',
         openrouterKey,
-        OPENROUTER_CARD_MODEL,
+        models?.openrouter || OPENROUTER_CARD_MODEL,
         systemPrompt,
         userPrompt,
         maxTokens,
@@ -791,6 +807,7 @@ Return ONLY the JSON object, no explanation.`;
         return new Response(JSON.stringify({ error: 'variableName is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
+      const cappedRaw = trimRawContext(rawContext);
       const contextParts: string[] = [];
       if (existingVariables) {
         for (const [key, value] of Object.entries(existingVariables)) {
@@ -804,16 +821,19 @@ Return ONLY the JSON object, no explanation.`;
 ${variableDescription ? `Purpose: ${variableDescription}` : ''}
 ${templateContext ? `This variable is used in this template:\n${templateContext}` : ''}
 ${contextParts.length > 0 ? `Other filled variables:\n${contextParts.join('\n')}` : ''}
-${rawContext ? `\nADDITIONAL RAW CONTEXT (use this as source material — extract relevant details for this variable):\n${rawContext}` : ''}
+${cappedRaw ? `\nADDITIONAL RAW CONTEXT (use this as source material — extract relevant details for this variable):\n${cappedRaw}` : ''}
 
 Write ONLY the variable value — no labels, no quotes around it, no explanation. Be creative and stay consistent with any existing context. If raw context is provided, extract and adapt relevant information for this specific variable.`;
 
       const { content: result, provider } = await callLLM(
         'You are a creative writer specializing in AI roleplay prompts, scenarios, and character definitions. Generate concise, fitting content for prompt template variables. When given raw context, intelligently extract and distribute relevant information.',
-        prompt, 512, 0.8
+        prompt,
+        PROMPT_VAR_MAX_TOKENS,
+        0.8,
+        { venice: VENICE_PROMPT_MODEL, openrouter: OPENROUTER_PROMPT_MODEL },
       );
 
-      return new Response(JSON.stringify({ result: result.trim() }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: result.trim(), provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === PROMPT BUILDER: GENERATE ALL VARIABLES ===
@@ -823,6 +843,7 @@ Write ONLY the variable value — no labels, no quotes around it, no explanation
         return new Response(JSON.stringify({ error: 'variables array is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
+      const cappedRaw = trimRawContext(rawContext);
       const contextParts: string[] = [];
       if (existingVariables) {
         for (const [key, value] of Object.entries(existingVariables)) {
@@ -852,14 +873,17 @@ Variables to generate:
 ${varList}
 
 ${contextParts.length > 0 ? `EXISTING CONTENT (use as foundation — expand, enhance, stay consistent. Treat existing text as seeds to build from):\n${contextParts.join('\n')}` : 'No variables filled yet — create original, compelling content.'}
-${rawContext ? `\nRAW CONTEXT (use this as primary source material — extract, adapt, and distribute relevant information into the most appropriate variables):\n${rawContext}` : ''}
+${cappedRaw ? `\nRAW CONTEXT (use this as primary source material — extract, adapt, and distribute relevant information into the most appropriate variables):\n${cappedRaw}` : ''}
 
 RESPOND IN VALID JSON FORMAT ONLY. The JSON should have each variable name as a key and the generated content as the value.
 Generate ALL variables listed above. Every variable must have a value. Stay consistent across all variables. If raw context or existing content is provided, use it as the foundation — enhance and flesh out, don't just copy.`;
 
       const { content: result, provider } = await callLLM(
         'You are a creative writer specializing in AI roleplay prompts, scenarios, lorebook entries, and character definitions. Generate rich, detailed, consistent content for all prompt template variables. When given raw context, intelligently extract and distribute relevant information into appropriate variables. ALWAYS respond with valid JSON only — no markdown, no explanation.',
-        prompt, 2048, 0.8
+        prompt,
+        PROMPT_ALL_VARS_MAX_TOKENS,
+        0.8,
+        { venice: VENICE_PROMPT_MODEL, openrouter: OPENROUTER_PROMPT_MODEL },
       );
 
       let parsed: Record<string, string> = {};
@@ -870,7 +894,7 @@ Generate ALL variables listed above. Every variable must have a value. Stay cons
         return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      return new Response(JSON.stringify({ result: parsed }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: parsed, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

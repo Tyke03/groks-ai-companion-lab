@@ -6,6 +6,7 @@ import { chatbots, categoryLabels, contentLevelLabels } from "@/data/chatbots";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, ExternalLink, Github, ChevronRight, CalendarDays, Copy, Check, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 
 const SECTION_LABELS: { id: string; label: string }[] = [
   { id: "quick-facts", label: "Quick Facts" },
@@ -164,7 +165,7 @@ const PlatformDocs = () => {
             </div>
           </nav>
 
-          <div className="max-w-3xl flex-1 space-y-10 min-w-0">
+          <div className="max-w-3xl flex-1 space-y-14 min-w-0">
             {/* Quick Facts */}
             <section id="quick-facts">
               <h2 className="font-display text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
@@ -187,6 +188,8 @@ const PlatformDocs = () => {
                 </div>
               )}
             </section>
+
+            <NeonSectionDivider />
 
             {/* Setup Steps */}
             {doc.setupSteps && (
@@ -277,7 +280,7 @@ const PlatformDocs = () => {
                 </h2>
                 <div className="space-y-3">
                   {doc.policyHistory.map((item, i) => (
-                    <div key={i} className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-muted-foreground">
+                    <div key={i} className="neon-callout-box p-3 text-sm" role="note">
                       {item}
                     </div>
                   ))}

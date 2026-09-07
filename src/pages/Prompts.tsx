@@ -134,7 +134,7 @@ const Prompts = () => {
                   <div className="col-span-2"><dt className="text-muted-foreground">Runtime macros</dt><dd className="font-mono text-foreground">{compatibility.runtimeMacros.length > 0 ? compatibility.runtimeMacros.join(", ") : "None"}</dd></div>
                 </dl>
                 <p className="mt-3 text-xs text-muted-foreground">{compatibility.pasteInstructions}</p>
-                {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-2 text-xs text-amber-300/90">Note: {caveat}</p>)}
+                {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-2 neon-callout text-xs" role="note">Note: {caveat}</p>)}
                 <pre tabIndex={0} className="my-4 max-h-36 overflow-auto whitespace-pre-wrap rounded-lg bg-secondary/60 p-3 text-xs text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{item.template}</pre>
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => copyRaw(item)}><Copy className="h-3.5 w-3.5" /> Copy raw template</Button>

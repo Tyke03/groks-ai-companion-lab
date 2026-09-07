@@ -329,11 +329,11 @@ export const DocConsolidator = () => {
         </div>
       )}
       {aiUnavailable && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <WifiOff className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+        <div className="neon-callout-box flex items-start gap-3 px-4 py-3" role="status">
+          <WifiOff className="h-4 w-4 mt-0.5 shrink-0" />
           <div className="text-sm space-y-2">
-            <p className="font-medium text-amber-300">Mode: Offline only (AI unavailable)</p>
-            <p className="text-muted-foreground">
+            <p className="font-medium neon-callout">Mode: Offline only (AI unavailable)</p>
+            <p>
               Paste and URL fetch still work. AI Consolidate is disabled until a backend is reachable.
               Use Draft offline — it embeds your pasted notes into the markdown skeleton.
             </p>
@@ -433,7 +433,7 @@ export const DocConsolidator = () => {
             Fetch does not need AI. Login walls, timeouts, and heavy JavaScript pages often fail — paste manually when that happens.
           </p>
           {fetchHint && (
-            <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+            <div className="mt-2 neon-callout-box">
               {fetchHint}
             </div>
           )}

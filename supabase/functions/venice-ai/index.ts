@@ -108,6 +108,9 @@ async function callLLMForWholeCard(
   const failures: string[] = [];
 
   const accept = (content: string, provider: string) => {
+    if (!content || !String(content).trim()) {
+      throw new Error('returned empty (0 chars)');
+    }
     const { card, parseError } = parseWholeCardJson(content);
     if (!parseError && card) return { content, provider, card };
     const why = looksLikeTruncatedCardJson(content) ? 'truncated/incomplete JSON' : 'invalid JSON';
@@ -129,9 +132,11 @@ async function callLLMForWholeCard(
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Venice card attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
-        failures.push(`Venice: ${msg}`);
-        const retryable = /stall|hung|timeout|wall|network|connection|abort|fetch|5\d\d|truncated|incomplete|invalid JSON/i.test(msg);
-        if (!retryable || attempt >= VENICE_MAX_ATTEMPTS) break;
+        failures.push(clarifyFailure('Venice', msg));
+        if (!isVeniceRetryable(msg) || attempt >= VENICE_MAX_ATTEMPTS) break;
+        const backoff = VENICE_RETRY_BASE_MS * attempt;
+        console.log(`Venice card retry backoff ${backoff}ms after:`, msg);
+        await sleepMs(backoff);
       }
     }
   }
@@ -152,7 +157,7 @@ async function callLLMForWholeCard(
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('OpenRouter card failed:', msg);
-      failures.push(`OpenRouter: ${msg}`);
+      failures.push(clarifyFailure('OpenRouter', msg));
     }
   }
 
@@ -172,14 +177,14 @@ async function callLLMForWholeCard(
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Lovable card failed:', msg);
-      failures.push(`Lovable: ${msg}`);
+      failures.push(clarifyFailure('Lovable', msg));
     }
   }
 
   if (failures.length === 0) {
     throw new Error('No API keys configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY)');
   }
-  throw new Error(`All LLM providers failed whole-card JSON. ${failures.join(' | ')}`);
+  throw new Error(formatCascadeFailure('whole-card', failures));
 }
 
 function extractCardField(card: Record<string, unknown>, fieldName: string): unknown {
@@ -265,8 +270,31 @@ const OPENROUTER_CARD_MODEL = 'google/gemma-4-31b-it:free';
 const VENICE_STALL_MS = 20_000;
 /** Absolute ceiling even if chunks keep arriving (edge-friendly). */
 const VENICE_MAX_WALL_MS = 110_000;
-/** One Venice retry after stall/hung/connection death, then OpenRouter -> Lovable. */
+/** One Venice retry after stall/hung/429/connection death, then OpenRouter -> Lovable. */
 const VENICE_MAX_ATTEMPTS = 2;
+/** Short backoff between Venice retries (429 / transient). */
+const VENICE_RETRY_BASE_MS = 700;
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isVeniceRetryable(msg: string): boolean {
+  return /stall|hung|timeout|wall|network|connection|abort|fetch|5\d\d|429|rate.?limit|truncated|incomplete|invalid JSON|returned empty/i.test(msg);
+}
+
+function clarifyFailure(provider: string, msg: string): string {
+  if (/429|rate.?limit/i.test(msg)) return `${provider}: rate-limited (429)`;
+  if (/returned empty|\(0 chars\)/i.test(msg)) return `${provider}: returned empty (0 chars)`;
+  if (/truncated|incomplete JSON/i.test(msg)) return `${provider}: truncated/incomplete JSON`;
+  return `${provider}: ${msg}`;
+}
+
+function formatCascadeFailure(kind: 'whole-card' | 'generic', failures: string[]): string {
+  const joined = failures.join(' | ');
+  if (kind === 'whole-card') return `All LLM providers failed whole-card JSON. ${joined}`;
+  return `All LLM providers failed. ${joined}`;
+}
 const CARD_JSON_MAX_TOKENS = 4096;
 
 async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CARD_JSON_MAX_TOKENS, temperature = 0.3) {
@@ -287,13 +315,18 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
           maxTokens,
           temperature,
         );
+        if (!content || !String(content).trim()) {
+          throw new Error('returned empty (0 chars)');
+        }
         return { content, provider: 'venice' };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Venice attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
-        failures.push(`Venice: ${msg}`);
-        const retryable = /stall|hung|timeout|wall|network|connection|abort|fetch|5\d\d/i.test(msg);
-        if (!retryable || attempt >= VENICE_MAX_ATTEMPTS) break;
+        failures.push(clarifyFailure('Venice', msg));
+        if (!isVeniceRetryable(msg) || attempt >= VENICE_MAX_ATTEMPTS) break;
+        const backoff = VENICE_RETRY_BASE_MS * attempt;
+        console.log(`Venice retry backoff ${backoff}ms after:`, msg);
+        await sleepMs(backoff);
       }
     }
   }
@@ -315,7 +348,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('OpenRouter failed:', msg);
-      failures.push(`OpenRouter: ${msg}`);
+      failures.push(clarifyFailure('OpenRouter', msg));
     }
   }
 
@@ -336,14 +369,14 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Lovable AI Gateway failed:', msg);
-      failures.push(`Lovable: ${msg}`);
+      failures.push(clarifyFailure('Lovable', msg));
     }
   }
 
   if (failures.length === 0) {
     throw new Error('No API keys configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY)');
   }
-  throw new Error(`All LLM providers failed. ${failures.join(' | ')}`);
+  throw new Error(formatCascadeFailure('generic', failures));
 }
 
 /** Stream Venice chat completions; abort only if stalled or past max wall clock. */
@@ -545,7 +578,11 @@ async function callProvider(
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || '';
+  const content = data.choices?.[0]?.message?.content || '';
+  if (!content || !String(content).trim()) {
+    throw new Error('returned empty (0 chars)');
+  }
+  return content;
 }
 
 Deno.serve(async (req) => {

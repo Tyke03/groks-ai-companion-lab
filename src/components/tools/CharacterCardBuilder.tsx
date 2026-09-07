@@ -47,6 +47,7 @@ import {
 import { estimateCardTokens } from "@/lib/cardTokens";
 import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
+import { formatLlmCascadeError } from "@/lib/llmErrors";
 import { deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
 import { loadLorebook } from "@/lib/lorebookStorage";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
@@ -483,14 +484,14 @@ export const CharacterCardBuilder = () => {
       });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error) {
-        toast({ title: "Error", description: String(data.error), variant: "destructive" });
+        toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
         return;
       }
       if (data?.parseError) {
         toast({
           title: "Partial result",
           description: data?.error
-            ? String(data.error)
+            ? formatLlmCascadeError(data.error)
             : "AI rebuilt the card but the response could not be parsed for this field.",
           variant: "destructive",
         });
@@ -509,7 +510,7 @@ export const CharacterCardBuilder = () => {
         }
       }
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to generate field.", variant: "destructive" });
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate field."), variant: "destructive" });
     } finally {
       setGeneratingField(null);
     }
@@ -527,7 +528,7 @@ export const CharacterCardBuilder = () => {
       });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error && !data?.result) {
-        toast({ title: "Error", description: String(data.error), variant: "destructive" });
+        toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
         return;
       }
       if (data?.result && typeof data.result === "object" && !data.parseError) {
@@ -557,13 +558,13 @@ export const CharacterCardBuilder = () => {
         toast({
           title: "Partial result",
           description: data?.error
-            ? String(data.error)
+            ? formatLlmCascadeError(data.error)
             : "AI response couldn't be parsed. Try generating individual fields.",
           variant: "destructive",
         });
       }
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to generate.", variant: "destructive" });
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate."), variant: "destructive" });
     } finally {
       setGeneratingAll(false);
     }
@@ -699,10 +700,10 @@ export const CharacterCardBuilder = () => {
         </div>
       )}
       {aiUnavailable && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <WifiOff className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+        <div className="neon-callout-box flex items-start gap-3 px-4 py-3" role="status">
+          <WifiOff className="h-4 w-4 mt-0.5 shrink-0" />
           <div className="text-sm">
-            <p className="font-medium text-amber-300">AI backend unavailable</p>
+            <p className="font-medium neon-callout">AI backend unavailable</p>
             <p className="text-muted-foreground">
               Manual editing, import, JSON export, and PNG embedding still work. AI generation buttons are disabled until the backend is reachable again.
             </p>
@@ -880,10 +881,10 @@ export const CharacterCardBuilder = () => {
             <Settings2 className="h-4 w-4 text-primary" />
             <p className="text-sm font-medium text-foreground">AI generation settings</p>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className="mt-2 neon-callout text-xs" role="note">
             Generation uses the app default path when a backend is configured. Custom OpenRouter / BYOK key entry is not available in this experiment - we do not collect API keys here.
           </p>
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className="mt-2 neon-callout text-xs" role="note">
             You can still edit every field manually and export cards locally.
           </p>
         </div>
@@ -1029,7 +1030,7 @@ export const CharacterCardBuilder = () => {
         <p className="neon-callout text-xs" role="note" data-testid="png-keep-hint">
           Current portrait is kept for this card by default (exports and AI gens do not wipe it). Uploading a new PNG is an optional override.
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="neon-callout text-xs" role="note">
           Portrait PNG (max {MAX_PNG_LABEL}) embeds into SillyTavern / RisuAI-style card PNGs. Per-card portraits survive card switches in this browser.
         </p>
         <input ref={pngInputRef} id="character-card-png" type="file" accept="image/png" className="sr-only" aria-label="Character portrait PNG" aria-describedby="character-card-png-help" onChange={(e) => { const f = e.target.files?.[0]; if (f) setPngFile(f); e.target.value = ""; }} />
@@ -1062,7 +1063,7 @@ export const CharacterCardBuilder = () => {
       </div>
 
       {/* Export actions */}
-      <p className="text-xs text-muted-foreground" data-testid="export-platform-hint">
+      <p className="neon-callout text-xs" role="note" data-testid="export-platform-hint">
         This workbench exports Character Card V2/V3 JSON and optional PNG embedding for frontends that import those files.
         Hosted platforms often use their own upload UI and may not accept these formats — check that platform's docs.
         We do not call hosted platform APIs from here.
@@ -1089,17 +1090,17 @@ export const CharacterCardBuilder = () => {
           </Button>
         </div>
         {!pngFile && (
-          <p id="png-export-help" className="text-xs text-muted-foreground" data-testid="png-export-disabled-hint">
+          <p id="png-export-help" className="neon-callout text-xs" role="note" data-testid="png-export-disabled-hint">
             PNG export needs a portrait for this card. Import a card PNG or choose one above — once set, it is kept across exports until you replace or clear it.
           </p>
         )}
         {pngFile && (
-          <p className="text-xs text-muted-foreground" data-testid="png-export-keep-hint">
+          <p className="neon-callout text-xs" role="note" data-testid="png-export-keep-hint">
             Using kept portrait “{pngFile.name}” for PNG export (optional replace above).
           </p>
         )}
         {needsLossyConfirm && (
-          <p className="text-xs text-amber-300" role="status" data-testid="lossy-v2-hint">
+          <p className="neon-callout text-xs" role="status" data-testid="lossy-v2-hint">
             V2 export will omit V3-only fields — you will be asked to confirm before download/copy.
           </p>
         )}

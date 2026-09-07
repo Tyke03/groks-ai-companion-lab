@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
+import { formatLlmCascadeError } from "@/lib/llmErrors";
 import { mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
 
@@ -179,7 +180,7 @@ export const PromptBuilder = () => {
       if (error) throw error;
       if (data?.result) setVariables((prev) => ({ ...prev, [varName]: data.result }));
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to generate.", variant: "destructive" });
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate."), variant: "destructive" });
     } finally {
       setGeneratingVar(null);
     }
@@ -214,7 +215,7 @@ export const PromptBuilder = () => {
         toast({ title: "Generated", description: `Filled ${Object.keys(data.result).length} variables.` });
       }
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to generate all.", variant: "destructive" });
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate all."), variant: "destructive" });
     } finally {
       setGeneratingAll(false);
     }
@@ -291,11 +292,11 @@ export const PromptBuilder = () => {
         </div>
       )}
       {aiUnavailable && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+        <div className="neon-callout-box flex items-start gap-3 px-4 py-3" role="status">
+          <WifiOff className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="text-sm">
-            <p className="font-medium text-amber-300">AI backend unavailable</p>
-            <p className="text-muted-foreground">Fill example values, edit fields, populate from card JSON, and copy — all work offline. AI generation stays disabled.</p>
+            <p className="font-medium neon-callout">AI backend unavailable</p>
+            <p>Fill example values, edit fields, populate from card JSON, and copy — all work offline. AI generation stays disabled.</p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
         </div>
@@ -323,8 +324,8 @@ export const PromptBuilder = () => {
         ))}
         <p className="text-xs text-muted-foreground">{selectedTemplate.description}</p>
         {selectedTemplate.useWhen && (
-          <p className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">Use when: </span>
+          <p className="neon-callout-box" role="note">
+            <span className="font-medium">Use when: </span>
             {selectedTemplate.useWhen}
           </p>
         )}
@@ -342,7 +343,7 @@ export const PromptBuilder = () => {
         <p className="mt-2 text-xs text-muted-foreground">
           Runtime macros: {compatibility.runtimeMacros.length > 0 ? compatibility.runtimeMacros.join(", ") : "None"}
         </p>
-        {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-1 text-xs text-amber-300/90">Note: {caveat}</p>)}
+        {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-1 neon-callout text-xs" role="note">Note: {caveat}</p>)}
       </div>
 
       <NeonSectionDivider />
@@ -404,7 +405,7 @@ export const PromptBuilder = () => {
         <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
           <div>
             <h3 className="font-display font-semibold text-foreground">Generated Prompt</h3>
-            {hasUnresolvedPlaceholders && <p className="text-xs text-amber-300">Fill the fields without examples before copying — or use Fill example values.</p>}
+            {hasUnresolvedPlaceholders && <p className="neon-callout text-xs" role="note">Fill the fields without examples before copying — or use Fill example values.</p>}
           </div>
           <Button size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}

@@ -11,6 +11,7 @@ import { Helmet } from "react-helmet-async";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { DirectoryFilters } from "@/components/directory/DirectoryFilters";
+import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import {
   filterChatbots,
   countByCategory,
@@ -306,6 +307,7 @@ const Index = () => {
       </div>
 
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8">
+        <NeonSectionDivider className="mt-0 mb-6" />
         {filtered.length === 0 ? (
           <div className="py-20 text-center">
             <p className="text-lg text-muted-foreground">

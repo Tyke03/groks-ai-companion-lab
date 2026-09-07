@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { Layout } from "@/components/Layout";
 import { chatbots, categoryLabels, contentLevelLabels, type Chatbot } from "@/data/chatbots";
 import { Link, useSearchParams } from "react-router-dom";
@@ -284,6 +285,9 @@ const Compare = () => {
             </div>
           )}
         </section>
+
+        <NeonSectionDivider />
+
 
         {/* ── Comparison matrix ──────────────────────────────────────── */}
         {selected.length >= 2 ? (

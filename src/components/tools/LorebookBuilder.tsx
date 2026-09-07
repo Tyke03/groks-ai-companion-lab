@@ -268,7 +268,7 @@ const LorebookBuilder = () => {
             <Link2 className="h-4 w-4" />
             Bound character cards
           </div>
-          <p className="mb-2 text-xs text-muted-foreground">
+          <p className="mb-2 neon-callout text-xs" role="note">
             Link this lorebook to cards from the Character Card Builder library (localStorage). Bindings survive reload.
           </p>
           {cardSlots.length === 0 ? (

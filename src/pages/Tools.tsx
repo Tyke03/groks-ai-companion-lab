@@ -66,7 +66,7 @@ const Tools = () => {
               Doc Consolidator
             </TabsTrigger>
           </TabsList>
-          <NeonSectionDivider className="mb-4 -mt-4" />
+          <NeonSectionDivider />
           <p className="mb-6 text-xs text-muted-foreground">
             Character Card Builder is the default tool. Lorebook Builder is a first-class tab. Secondary: Doc Consolidator builds a Hub guide from pasted notes (AI optional).
           </p>

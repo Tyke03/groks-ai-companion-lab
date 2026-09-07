@@ -80,11 +80,11 @@ export function WorkbenchCardPicker({
           className="mt-3 space-y-2 rounded-lg border border-border bg-secondary/30 p-3"
           data-testid="workbench-card-picker-panel"
         >
-          <p className="text-xs text-muted-foreground">
+          <p className="neon-callout text-xs" role="note">
             Inject a card from your Character Card Builder library (no JSON copy/paste).
           </p>
           {slots.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No local cards yet. Create one in Character Card Builder.</p>
+            <p className="neon-callout text-xs" role="note">No local cards yet. Create one in Character Card Builder.</p>
           ) : (
             <ul className="max-h-48 space-y-1 overflow-auto" aria-label="Workbench cards">
               {slots.map((slot) => (

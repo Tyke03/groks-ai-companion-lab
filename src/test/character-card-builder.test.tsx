@@ -80,6 +80,13 @@ describe("CharacterCardBuilder multi-card + lossy V2", () => {
     render(<CharacterCardBuilder />);
     const pngBtn = screen.getByTestId("export-png-button");
     expect(pngBtn).toBeDisabled();
-    expect(screen.getByTestId("png-export-disabled-hint")).toHaveTextContent(/disabled until you upload a portrait/i);
+    expect(screen.getByTestId("png-export-disabled-hint")).toHaveTextContent(/needs a portrait/i);
+    expect(screen.getByTestId("png-keep-hint")).toHaveTextContent(/kept for this card by default/i);
+  });
+
+  it("keeps portrait label copy for optional replace", () => {
+    render(<CharacterCardBuilder />);
+    expect(screen.getByTestId("png-choose-button")).toHaveTextContent(/Choose PNG/i);
+    expect(screen.getByTestId("png-portrait-panel")).toBeInTheDocument();
   });
 });

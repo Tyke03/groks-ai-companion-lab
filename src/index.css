@@ -135,4 +135,34 @@
   .honesty-pill {
     @apply inline-flex items-center rounded-full border border-border/80 bg-secondary/70 px-2.5 py-1 text-[11px] font-medium text-muted-foreground;
   }
+
+  .neon-section-divider {
+    height: 1px;
+    width: 100%;
+    border: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(199 100% 60% / 0.15) 12%,
+      hsl(199 100% 65% / 0.95) 50%,
+      hsl(199 100% 60% / 0.15) 88%,
+      transparent 100%
+    );
+    box-shadow:
+      0 0 6px hsl(199 100% 60% / 0.55),
+      0 0 14px hsl(199 100% 55% / 0.35);
+  }
+
+  .neon-callout {
+    color: hsl(322 95% 72%);
+    text-shadow: 0 0 10px hsl(322 95% 60% / 0.45);
+  }
+
+  .neon-callout-box {
+    @apply rounded-md border px-3 py-2 text-xs;
+    border-color: hsl(322 90% 55% / 0.45);
+    background: hsl(322 80% 45% / 0.08);
+    color: hsl(322 95% 78%);
+    box-shadow: 0 0 12px hsl(322 90% 55% / 0.18);
+  }
 }

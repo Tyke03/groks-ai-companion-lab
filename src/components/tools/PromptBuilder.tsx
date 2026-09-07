@@ -15,6 +15,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
+import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
+import { mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
 
 const customKey = "ai-companion-hub-custom-prompts";
@@ -218,58 +220,53 @@ export const PromptBuilder = () => {
     }
   };
 
+  const applyCardFields = (fields: Record<string, unknown>, alsoRaw = false, labeled = "") => {
+    const newVars = mapCardFieldsToVariables(
+      fields,
+      selectedTemplate.variables.map((variable) => variable.name),
+    );
+    if (Object.keys(newVars).length > 0) {
+      setVariables((prev) => ({ ...prev, ...newVars }));
+    }
+    if (alsoRaw && labeled.trim()) {
+      setRawContext((prev) => (prev.trim() ? `${prev.trim()}\n\n${labeled}` : labeled));
+      setShowRawContext(true);
+    }
+    return Object.keys(newVars).length;
+  };
+
   const handlePopulateFromCard = () => {
     if (!importText.trim()) {
-      toast({ title: "Empty", description: "Paste character card JSON to populate.", variant: "destructive" });
+      toast({ title: "Empty", description: "Paste character card JSON or pick a Workbench card.", variant: "destructive" });
       return;
     }
-    try {
-      let parsed = JSON.parse(importText);
-      if (parsed?.data) parsed = parsed.data;
-
-      const mapping: Record<string, string[]> = {
-        character_name: ["name"],
-        character_role: ["personality"],
-        setting: ["scenario"],
-        personality_traits: ["personality"],
-        speaking_style: ["personality"],
-        personality: ["personality"],
-        description: ["description"],
-        scenario: ["scenario"],
-        scenario_title: ["scenario"],
-        setting_description: ["scenario"],
-        context: ["scenario", "description"],
-        action_description: ["first_mes"],
-        greeting_dialogue: ["first_mes"],
-        scene_description: ["scenario"],
-        entry_name: ["name"],
-        example_dialogue: ["mes_example", "example_dialogue"],
-      };
-
-      const newVars: Record<string, string> = {};
-      for (const variable of selectedTemplate.variables) {
-        const sources = mapping[variable.name];
-        if (sources) {
-          for (const source of sources) {
-            if (parsed[source] && typeof parsed[source] === "string" && parsed[source].trim()) {
-              newVars[variable.name] = parsed[source].substring(0, 200);
-              break;
-            }
-          }
-        }
-      }
-
-      if (Object.keys(newVars).length > 0) {
-        setVariables((prev) => ({ ...prev, ...newVars }));
-        toast({ title: "Populated", description: `Filled ${Object.keys(newVars).length} variables from character card.` });
-      } else {
-        toast({ title: "No matches", description: "No fields could be mapped to this template's variables.", variant: "destructive" });
-      }
-      setShowImport(false);
-      setImportText("");
-    } catch {
-      toast({ title: "Invalid JSON", description: "Could not parse the pasted data as JSON.", variant: "destructive" });
+    const parsed = parsePopulateCardJson(importText);
+    if (!parsed) {
+      toast({
+        title: "Could not read card",
+        description: "Accepted: chara_card_v2 / chub_2 / V3 envelopes, or near-valid flat card JSON with name + fields.",
+        variant: "destructive",
+      });
+      return;
     }
+    const filled = applyCardFields(parsed);
+    if (filled > 0) {
+      toast({ title: "Populated", description: `Filled ${filled} variables from character card.` });
+    } else {
+      toast({ title: "No matches", description: "No fields could be mapped to this template's variables.", variant: "destructive" });
+    }
+    setShowImport(false);
+    setImportText("");
+  };
+
+  const handleWorkbenchCardPick = (pick: WorkbenchCardPick) => {
+    const filled = applyCardFields(pick.fields, true, pick.contextText);
+    toast({
+      title: "Workbench card applied",
+      description: filled > 0
+        ? `Filled ${filled} variables from “${pick.slot.label}” and added labeled fields to raw context.`
+        : `Added “${pick.slot.label}” labeled fields to raw context.`,
+    });
   };
 
   return (
@@ -285,6 +282,8 @@ export const PromptBuilder = () => {
           </p>
         )}
       </div>
+
+      <NeonSectionDivider />
 
       {ai.status === "checking" && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
@@ -346,17 +345,20 @@ export const PromptBuilder = () => {
         {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-1 text-xs text-amber-300/90">Note: {caveat}</p>)}
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <NeonSectionDivider />
+
+      <div className="flex flex-wrap gap-2 items-start">
         <Button variant="outline" size="sm" onClick={handleFillExamples} disabled={selectedTemplate.variables.length === 0}>
           <ListChecks className="h-4 w-4" /> Fill example values
         </Button>
+        <WorkbenchCardPicker onSelect={handleWorkbenchCardPick} />
         <Button variant="outline" size="sm" aria-expanded={showImport} aria-controls="prompt-import-panel" onClick={() => setShowImport(!showImport)}><Upload className="h-4 w-4" /> Populate from Card / JSON</Button>
         <Button variant="outline" size="sm" aria-expanded={showRawContext} aria-controls="prompt-raw-context-panel" onClick={() => setShowRawContext(!showRawContext)}><Wand2 className="h-4 w-4" /> Paste Raw Text as Context</Button>
       </div>
 
       {showImport && (
         <div id="prompt-import-panel" className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4">
-          <p className="text-sm text-muted-foreground">Paste character card JSON and matching fields will be mapped to author placeholders in this template.</p>
+          <p className="text-sm text-muted-foreground">Paste character card JSON (chara_card_v2 / chub_2 / V3 / near-valid flat) — or use Populate from Workbench card above to skip copy/paste.</p>
           <Textarea aria-label="Character card JSON to map" placeholder="Paste character card JSON or character card data..." value={importText} onChange={(event) => setImportText(event.target.value)} className="min-h-[100px] border-border bg-secondary font-mono text-sm" />
           <div className="flex gap-2"><Button size="sm" onClick={handlePopulateFromCard}><Upload className="h-4 w-4" /> Populate</Button><Button variant="ghost" size="sm" onClick={() => { setShowImport(false); setImportText(""); }}>Cancel</Button></div>
         </div>

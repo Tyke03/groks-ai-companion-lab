@@ -7,6 +7,7 @@ import { PlatformCombobox } from "@/components/tools/PlatformCombobox";
 import { chatbots } from "@/data/chatbots";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
+import { WorkbenchCardPicker, NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -370,10 +371,20 @@ export const DocConsolidator = () => {
           )}
         </div>
 
+        <NeonSectionDivider />
+
         <div>
-          <label htmlFor="doc-input" className="text-sm font-medium text-foreground mb-1 block">
-            Paste Documentation
-          </label>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <label htmlFor="doc-input" className="text-sm font-medium text-foreground">
+              Paste Documentation
+            </label>
+            <WorkbenchCardPicker
+              buttonLabel="Populate from Workbench card"
+              onSelect={(pick) => {
+                setInputText((prev) => (prev.trim() ? `${prev.trim()}\n\n${pick.contextText}` : pick.contextText));
+              }}
+            />
+          </div>
           <Textarea
             id="doc-input"
             placeholder="Paste documentation text, setup guides, wiki content, README files, etc. This is the primary path — used by both Draft offline and AI Consolidate. URL fetch below is optional."
@@ -418,7 +429,7 @@ export const DocConsolidator = () => {
               {fetching ? "Fetching..." : "Fetch"}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="neon-callout text-xs mt-1" role="note" data-testid="doc-fetch-callout">
             Fetch does not need AI. Login walls, timeouts, and heavy JavaScript pages often fail — paste manually when that happens.
           </p>
           {fetchHint && (

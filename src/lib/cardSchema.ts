@@ -28,13 +28,13 @@ export const strictAssetSchema = assetSchema.extend({
 });
 
 export const v2EnvelopeSchema = z.object({
-  spec: z.literal("chara_card_v2"),
+  spec: z.union([z.literal("chara_card_v2"), z.literal("chub_2"), z.literal("chub.ai_v2")]),
   spec_version: z.string().optional(),
   data: z.record(z.unknown()),
 });
 
 export const v3EnvelopeSchema = z.object({
-  spec: z.literal("chara_card_v3"),
+  spec: z.union([z.literal("chara_card_v3"), z.literal("chub_3"), z.literal("chub.ai_v3")]),
   spec_version: z.string().optional(),
   data: z.record(z.unknown()),
 });

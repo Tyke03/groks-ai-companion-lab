@@ -46,6 +46,8 @@ import {
 } from "@/lib/cardStorage";
 import { estimateCardTokens } from "@/lib/cardTokens";
 import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBridges";
+import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
+import { deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
 import { loadLorebook } from "@/lib/lorebookStorage";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import {
@@ -211,6 +213,24 @@ export const CharacterCardBuilder = () => {
   const [importError, setImportError] = useState<string | null>(null);
   const [pngFile, setPngFile] = useState<File | null>(null);
   const pngInputRef = useRef<HTMLInputElement>(null);
+  const activeCardId = library.activeId;
+
+  // Restore per-slot portrait (session + IndexedDB). Keep current PNG by default.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const file = await loadPortrait(activeCardId);
+      if (!cancelled) setPngFile(file);
+    })();
+    return () => { cancelled = true; };
+  }, [activeCardId]);
+
+  // Persist portrait whenever the active card has one (optional override still replaces).
+  useEffect(() => {
+    if (!pngFile) return;
+    void savePortrait(activeCardId, pngFile);
+  }, [pngFile, activeCardId]);
+
   const fileImportRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const ai = useAiBackendStatus();
@@ -424,20 +444,21 @@ export const CharacterCardBuilder = () => {
   };
 
   const handleNewCard = () => {
+    // Keep prior card portrait in storage; new blank card starts without one.
     flushThen((lib) => createNewCard(lib));
     setPngFile(null);
-    toast({ title: "New card", description: "Started a blank card. Your previous card stays in the local list." });
+    toast({ title: "New card", description: "Started a blank card. Your previous card (and its portrait) stays in the local list." });
   };
 
   const handleSelectCard = (id: string) => {
     if (id === library.activeId) return;
+    // Portrait restore is handled by activeCardId effect -- do not wipe other slots.
     flushThen((lib) => switchActiveCard(lib, id));
-    setPngFile(null);
   };
 
   const handleDeleteCard = (id: string) => {
+    void deletePortrait(id);
     flushThen((lib) => deleteCard(lib, id));
-    setPngFile(null);
     setPendingDeleteId(null);
     toast({ title: "Removed", description: "Card removed from the local list." });
   };
@@ -632,7 +653,8 @@ export const CharacterCardBuilder = () => {
     setImportedFormat(null);
     setImportWarnings([]);
     setPngFile(null);
-    toast({ title: "Cleared", description: "Active card fields reset. Other saved cards are unchanged." });
+    void deletePortrait(library.activeId);
+    toast({ title: "Cleared", description: "Active card fields and portrait reset. Other saved cards are unchanged." });
   };
 
   const v2Fields: { key: keyof CardData; label: string; multiline?: boolean; placeholder: string }[] = [
@@ -667,6 +689,7 @@ export const CharacterCardBuilder = () => {
           Import V1/V2/V3 cards, export validated V2 JSON/PNG or V3 draft JSON/PNG with embedded data, and use AI to generate or enhance fields.
         </p>
       </div>
+      <NeonSectionDivider />
 
       {/* AI backend status banner */}
       {ai.status === "checking" && (
@@ -998,20 +1021,38 @@ export const CharacterCardBuilder = () => {
         )}
       </div>
 
-      {/* PNG image for embedding */}
-      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+      <NeonSectionDivider />
+
+      {/* PNG image for embedding -- keep current by default; upload is optional override */}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3" data-testid="png-portrait-panel">
         <p className="text-sm font-medium text-foreground">PNG Image for Card Embedding</p>
-        <p className="text-xs text-muted-foreground">
-          Upload a character portrait PNG (max {MAX_PNG_LABEL}) to export as an embedded card (used by SillyTavern, RisuAI, etc.)
+        <p className="neon-callout text-xs" role="note" data-testid="png-keep-hint">
+          Current portrait is kept for this card by default (exports and AI gens do not wipe it). Uploading a new PNG is an optional override.
         </p>
-        <input ref={pngInputRef} id="character-card-png" type="file" accept="image/png" className="sr-only" aria-label="Character portrait PNG" aria-describedby="character-card-png-help" onChange={(e) => { const f = e.target.files?.[0]; if (f) setPngFile(f); }} />
-        <p id="character-card-png-help" className="sr-only">PNG images only, maximum size {MAX_PNG_LABEL}. The image stays in your browser and is used for local card embedding.</p>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => pngInputRef.current?.click()} aria-describedby="character-card-png-help">
+        <p className="text-xs text-muted-foreground">
+          Portrait PNG (max {MAX_PNG_LABEL}) embeds into SillyTavern / RisuAI-style card PNGs. Per-card portraits survive card switches in this browser.
+        </p>
+        <input ref={pngInputRef} id="character-card-png" type="file" accept="image/png" className="sr-only" aria-label="Character portrait PNG" aria-describedby="character-card-png-help" onChange={(e) => { const f = e.target.files?.[0]; if (f) setPngFile(f); e.target.value = ""; }} />
+        <p id="character-card-png-help" className="sr-only">PNG images only, maximum size {MAX_PNG_LABEL}. The image stays in your browser and is used for local card embedding. Re-upload only to replace the current portrait.</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => pngInputRef.current?.click()} aria-describedby="character-card-png-help" data-testid="png-choose-button">
             <Image className="h-4 w-4" />
-            {pngFile ? pngFile.name : "Choose PNG"}
+            {pngFile ? "Replace PNG (optional)" : "Choose PNG"}
           </Button>
-          {pngFile && <span className="text-xs text-muted-foreground">{(pngFile.size / 1024).toFixed(0)} KB</span>}
+          {pngFile && (
+            <>
+              <span className="text-xs text-muted-foreground" data-testid="png-current-name">{pngFile.name} · {(pngFile.size / 1024).toFixed(0)} KB</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => { setPngFile(null); void deletePortrait(library.activeId); }}
+                data-testid="png-clear-button"
+              >
+                <Trash2 className="h-4 w-4" /> Clear portrait
+              </Button>
+            </>
+          )}
         </div>
         {pngPreviewUrl && (
           <div className="mt-2">
@@ -1049,7 +1090,12 @@ export const CharacterCardBuilder = () => {
         </div>
         {!pngFile && (
           <p id="png-export-help" className="text-xs text-muted-foreground" data-testid="png-export-disabled-hint">
-            PNG export is disabled until you upload a portrait in “PNG Image for Card Embedding” above.
+            PNG export needs a portrait for this card. Import a card PNG or choose one above — once set, it is kept across exports until you replace or clear it.
+          </p>
+        )}
+        {pngFile && (
+          <p className="text-xs text-muted-foreground" data-testid="png-export-keep-hint">
+            Using kept portrait “{pngFile.name}” for PNG export (optional replace above).
           </p>
         )}
         {needsLossyConfirm && (

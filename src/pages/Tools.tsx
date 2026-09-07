@@ -6,6 +6,7 @@ import { DocConsolidator } from "@/components/tools/DocConsolidator";
 import { CharacterCardBuilder } from "@/components/tools/CharacterCardBuilder";
 import { PromptBuilder } from "@/components/tools/PromptBuilder";
 import LorebookBuilder from "@/components/tools/LorebookBuilder";
+import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 
 const TAB_VALUES = new Set(["character", "lorebook", "prompts", "consolidator"]);
 
@@ -65,7 +66,8 @@ const Tools = () => {
               Doc Consolidator
             </TabsTrigger>
           </TabsList>
-          <p className="mb-6 -mt-4 text-xs text-muted-foreground">
+          <NeonSectionDivider className="mb-4 -mt-4" />
+          <p className="mb-6 text-xs text-muted-foreground">
             Character Card Builder is the default tool. Lorebook Builder is a first-class tab. Secondary: Doc Consolidator builds a Hub guide from pasted notes (AI optional).
           </p>
 

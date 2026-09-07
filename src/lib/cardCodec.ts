@@ -79,8 +79,9 @@ function splitTags(tags: string): string[] {
 /** Detect the card format of a parsed JSON value, or null when it is not a card. */
 export function detectCardFormat(json: unknown): CardFormat | null {
   if (!isRecord(json)) return null;
-  if (json.spec === "chara_card_v3" && isRecord(json.data)) return "v3";
-  if (json.spec === "chara_card_v2" && isRecord(json.data)) return "v2";
+  const spec = typeof json.spec === "string" ? json.spec : "";
+  if ((spec === "chara_card_v3" || spec === "chub_3" || spec === "chub.ai_v3") && isRecord(json.data)) return "v3";
+  if ((spec === "chara_card_v2" || spec === "chub_2" || spec === "chub.ai_v2") && isRecord(json.data)) return "v2";
   // Flat V1 card: requires `name` plus at least one other V1 core field.
   if (
     typeof json.name === "string" &&

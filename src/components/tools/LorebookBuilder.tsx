@@ -6,6 +6,8 @@ import { Switch } from "@/components/ui/switch";
 import { Download, FileJson, Link2, Plus, Search, Trash2, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { loadCardLibrary, type StoredCardSlot } from "@/lib/cardStorage";
+import { NeonSectionDivider, WorkbenchCardPicker } from "@/components/tools/WorkbenchCardPicker";
+import { formatSlotContext } from "@/lib/workbenchCardContext";
 import {
   DEFAULT_LOREBOOK_NAME,
   emptyEntry,
@@ -239,6 +241,8 @@ const LorebookBuilder = () => {
         </p>
       </div>
 
+      <NeonSectionDivider />
+
       <div className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div>
           <label htmlFor="lorebook-name" className="text-sm font-medium">
@@ -289,6 +293,28 @@ const LorebookBuilder = () => {
               })}
             </ul>
           )}
+          <div className="pt-2">
+            <WorkbenchCardPicker
+              buttonLabel="Inject card text into selected entry"
+              onSelect={(pick) => {
+                if (!selected) {
+                  toast({ title: "Select an entry", description: "Pick or add a lorebook entry first.", variant: "destructive" });
+                  return;
+                }
+                const chunk = formatSlotContext(pick.slot);
+                patchBook((previous) => ({
+                  ...previous,
+                  updatedAt: Date.now(),
+                  entries: previous.entries.map((entry) =>
+                    entry.id === selected.id
+                      ? { ...entry, content: entry.content.trim() ? `${entry.content.trim()}\n\n${chunk}` : chunk }
+                      : entry,
+                  ),
+                }));
+                toast({ title: "Card injected", description: `Added “${pick.slot.label}” fields into the selected entry.` });
+              }}
+            />
+          </div>
         </div>
       </div>
 

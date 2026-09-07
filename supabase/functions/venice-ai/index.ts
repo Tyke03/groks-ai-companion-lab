@@ -299,8 +299,8 @@ const CARD_JSON_MAX_TOKENS = 4096;
 /** Prompt Builder var gen: smaller completions than whole-card JSON (do not inherit CARD_JSON_MAX_TOKENS). */
 const PROMPT_VAR_MAX_TOKENS = 512;
 const PROMPT_ALL_VARS_MAX_TOKENS = 2048;
-/** Cap rawContext injected into prompt-var prompts (~6–8k chars). */
-const RAW_CONTEXT_MAX_CHARS = 7500;
+/** Deno/safety ceiling only — not a light-tool throttle. Full card + prompt instructions allowed. */
+const RAW_CONTEXT_MAX_CHARS = 120_000;
 /** Fast/cheap models for prompt-var path (same flash stack; separate constants so card defaults cannot silently apply). */
 const VENICE_PROMPT_MODEL = VENICE_CARD_MODEL;
 const OPENROUTER_PROMPT_MODEL = OPENROUTER_CARD_MODEL;

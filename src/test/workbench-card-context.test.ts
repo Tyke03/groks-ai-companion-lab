@@ -4,9 +4,6 @@ import {
   unwrapCardFields,
   mapCardFieldsToVariables,
   formatCardContextLabeled,
-  formatCompactCardContext,
-  trimPromptRawContext,
-  PROMPT_RAW_CONTEXT_MAX_CHARS,
 } from "@/lib/workbenchCardContext";
 import { emptyCardData } from "@/lib/cardTypes";
 import { detectCardFormat, importCard } from "@/lib/cardCodec";
@@ -77,7 +74,7 @@ describe("workbench card populate parsing", () => {
     expect(text).toContain("curious");
   });
 
-  it("formats compact card context with capped core fields only", () => {
+  it("formats full labeled card context without compact truncation", () => {
     const card = emptyCardData();
     card.name = "Nova";
     card.description = "D".repeat(2000);
@@ -85,25 +82,17 @@ describe("workbench card populate parsing", () => {
     card.scenario = "station";
     card.first_mes = "Hello";
     card.tags = "sci-fi, pilot";
-    card.mes_example = "should not appear in compact";
-    card.creator_notes = "also excluded";
-    const text = formatCompactCardContext(card, "Nova");
+    card.mes_example = "<START>\n{{user}}: Hi\n{{char}}: Hello";
+    card.creator_notes = "author notes stay in full context";
+    const text = formatCardContextLabeled(card, "Nova");
     expect(text).toContain("# Workbench card: Nova");
     expect(text).toContain("## description");
-    expect(text).toContain("## personality");
-    expect(text).toContain("## tags");
-    expect(text).not.toContain("mes_example");
-    expect(text).not.toContain("creator_notes");
-    expect(text).not.toContain("should not appear");
-    expect(text.length).toBeLessThan(5000);
-    expect(text).toContain("…");
-  });
-
-  it("trims oversized prompt rawContext", () => {
-    const huge = "x".repeat(PROMPT_RAW_CONTEXT_MAX_CHARS + 500);
-    const trimmed = trimPromptRawContext(huge);
-    expect(trimmed.length).toBeLessThanOrEqual(PROMPT_RAW_CONTEXT_MAX_CHARS);
-    expect(trimmed.endsWith("…")).toBe(true);
+    expect(text).toContain("D".repeat(2000));
+    expect(text).toContain("## mes_example");
+    expect(text).toContain("{{char}}: Hello");
+    expect(text).toContain("## creator_notes");
+    expect(text).toContain("author notes stay in full context");
+    expect(text).not.toContain("…");
   });
 });
 

@@ -17,7 +17,7 @@ import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
 import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
-import { formatSlotContextCompact, mapCardFieldsToVariables, parsePopulateCardJson, trimPromptRawContext } from "@/lib/workbenchCardContext";
+import { formatSlotContext, mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
 
 const customKey = "ai-companion-hub-custom-prompts";
@@ -167,7 +167,6 @@ export const PromptBuilder = () => {
     }
     setGeneratingVar(varName);
     try {
-      const trimmedContext = trimPromptRawContext(rawContext);
       const { data, error } = await supabase.functions.invoke("venice-ai", {
         body: {
           action: "generate-prompt-variable",
@@ -175,7 +174,7 @@ export const PromptBuilder = () => {
           variableDescription: varDef?.description || "",
           templateContext: selectedTemplate.template,
           existingVariables: variables,
-          rawContext: trimmedContext || undefined,
+          rawContext: rawContext.trim() || undefined,
         },
       });
       if (error) throw new Error(await edgeInvokeError(error, data));
@@ -198,7 +197,6 @@ export const PromptBuilder = () => {
     }
     setGeneratingAll(true);
     try {
-      const trimmedContext = trimPromptRawContext(rawContext);
       const { data, error } = await supabase.functions.invoke("venice-ai", {
         body: {
           action: "generate-all-prompt-variables",
@@ -212,7 +210,7 @@ export const PromptBuilder = () => {
             placeholder: v.placeholder,
           })),
           existingVariables: variables,
-          rawContext: trimmedContext || undefined,
+          rawContext: rawContext.trim() || undefined,
         },
       });
       if (error) throw new Error(await edgeInvokeError(error, data));
@@ -271,14 +269,14 @@ export const PromptBuilder = () => {
   };
 
   const handleWorkbenchCardPick = (pick: WorkbenchCardPick) => {
-    // Compact labeled summary (not full card JSON dump) keeps prompt-var Gen under rate limits.
-    const compact = formatSlotContextCompact(pick.slot);
-    const filled = applyCardFields(pick.fields, true, compact);
+    // Full labeled workbench card text — no compact/truncate governor for Prompt Gen.
+    const fullContext = pick.contextText || formatSlotContext(pick.slot);
+    const filled = applyCardFields(pick.fields, true, fullContext);
     toast({
       title: "Workbench card applied",
       description: filled > 0
-        ? `Filled ${filled} variables from "${pick.slot.label}" and added a compact card summary to raw context.`
-        : `Added "${pick.slot.label}" compact summary to raw context.`,
+        ? `Filled ${filled} variables from "${pick.slot.label}" and added labeled fields to raw context.`
+        : `Added "${pick.slot.label}" labeled fields to raw context.`,
     });
   };
 

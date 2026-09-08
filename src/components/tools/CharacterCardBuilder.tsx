@@ -622,7 +622,6 @@ export const CharacterCardBuilder = () => {
           updateField(fieldName, sanitizeCardMacros(asStr, String(fieldName)));
         }
       }
-      }
     } catch (err) {
       toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate field."), variant: "destructive" });
     } finally {

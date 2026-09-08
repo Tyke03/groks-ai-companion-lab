@@ -285,6 +285,71 @@ ${isV3 ? 'V3 card context.' : 'V2-flat card context.'}
 Respond with ONLY the field text, no JSON, no fences, no commentary.`;
 }
 
+function buildRefinementFieldPrompt(
+  fieldName: string,
+  currentValue: string,
+  notes: string,
+  existingFields: Record<string, unknown> | null | undefined,
+  isV3: boolean,
+): string {
+  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
+  const contextBlock = contextParts.length > 0
+    ? `LABELED CURRENT CARD CONTEXT (other fields for consistency):\n${contextParts.join('\n\n')}`
+    : 'No other fields filled.';
+  const pov = FIELD_POV_SNIPPETS[fieldName] || 'Follow the field bible for this key.';
+  const bibleLine = (() => {
+    const lines = CARD_FIELD_BIBLE.split('\n');
+    const hit = lines.find((l) => l.trim().startsWith(`- ${fieldName}:`));
+    return hit ? hit.trim() : `- ${fieldName}: follow CCV2/V3 field bible.`;
+  })();
+  return `${CARD_FIELD_BIBLE}
+
+${FIELD_POV_CONTRACT}
+
+${VOICE_ANCHOR_RULES}
+
+${fieldName === 'mes_example' ? MES_EXAMPLE_FORMAT_RULES + '\n\n' : ''}TARGET FIELD: ${fieldName}
+FIELD BIBLE: ${bibleLine}
+${pov}
+
+${contextBlock}
+
+REFINE / DELTA MODE (do NOT start from scratch):
+You are revising an existing draft of "${fieldName}". Preserve identity, voice, established facts, and structure unless the creator notes explicitly change them. Address the critique; do not rewrite into an unrelated field.
+
+CURRENT DRAFT of "${fieldName}":
+${currentValue}
+
+CREATOR CRITIQUE / NOTES:
+${notes}
+
+PRESERVATION RULES:
+- Keep the same field type/format (e.g. mes_example still exactly three <START> blocks with {{user}}:/{{char}}:; first_mes stays a single opener).
+- Stay consistent with Voice Anchor + POV + macro rules.
+- MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}; no The User; no User:/Name: labels.
+${isV3 ? '- V3 card context.' : '- V2-flat card context.'}
+
+Respond with ONLY the revised field text, no JSON, no fences, no commentary.`;
+}
+
+function buildRefineAllAppendix(notes: string): string {
+  return `
+
+REFINE-ALL MODE (DELTA / PRESERVATION — do NOT invent a brand-new unrelated character):
+Treat the LABELED CURRENT CARD TEXT above as the DRAFT to revise in place.
+
+CREATOR CRITIQUE / NOTES:
+${notes}
+
+PRESERVATION RULES:
+- Revise fields to address the critique while preserving name, core identity, established relationships, speech quirks, and Voice Anchor unless the notes explicitly override them.
+- Keep the Hub flat JSON schema + RESPONSE_SCHEMA_TEMPLATE + POV/Voice Anchor contracts above.
+- Still return complete flat Hub JSON for every key (use "" or [] when empty).
+- Enrich gaps only where the notes imply; do not wipe good prose that already fits the critique.
+- first_mes remains a single opener; mes_example remains three progression <START> blocks with {{user}}:/{{char}}: only.`;
+}
+
+
 /**
  * Normalize foreign / nested whole-card JSON into flat Hub CardData keys only.
  * Does NOT invent character_book from lore; skips unknown wrappers after unwrap.
@@ -1044,15 +1109,40 @@ ${text}`;
     }
 
     // === CHARACTER CARD: GENERATE SINGLE FIELD ===
-    // HYBRID: enough context => fast targeted single-field (plain text); else whole-card-then-slice.
+    // HYBRID (no notes): enough context => fast targeted single-field (plain text); else whole-card-then-slice.
+    // WITH refinementNotes + draft content: ALWAYS targeted plain-text DELTA refine (never whole-card rebuild).
     if (action === 'generate-field') {
-      const { fieldName, existingFields, specVersion } = body;
+      const { fieldName, existingFields, specVersion, refinementNotes, currentValue } = body;
       if (!fieldName) {
         return new Response(JSON.stringify({ error: 'fieldName is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       const isV3 = specVersion === 'v3' || specVersion === 'V3';
       const fieldKey = String(fieldName);
+      const notes = typeof refinementNotes === 'string' ? refinementNotes.trim() : '';
+      const clientDraft = typeof currentValue === 'string' ? currentValue : '';
+      const existingDraft = formatExistingFieldValue(existingFields?.[fieldKey]) || '';
+      const draft = clientDraft.trim() || existingDraft;
+      const useRefine = notes.length > 0 && draft.length > 0;
+
+      if (useRefine) {
+        // Single-field with notes: ALWAYS targeted plain-text path (even if sparse context).
+        const prompt = buildRefinementFieldPrompt(fieldKey, draft, notes, existingFields, isV3);
+        const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
+        const singleSystem = `You are an expert Character Card field editor for SillyTavern CCV2/V3.
+Revise ONLY the requested field draft per the creator critique. Do not start from scratch.
+Write ONLY the revised field text. No JSON, no markdown fences, no commentary.
+Follow Voice Anchor + POV + macro rules in the user prompt.`;
+        const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
+        let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
+        if (typeof fieldValue === 'string') {
+          const fence = fieldValue.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
+          if (fence) fieldValue = fence[1].trim();
+          fieldValue = sanitizeCardText(fieldValue, fieldKey);
+        }
+        return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: false, refined: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       const useTargeted = hasEnoughSingleFieldContext(existingFields);
 
       if (useTargeted) {
@@ -1089,16 +1179,24 @@ Follow Voice Anchor + POV + macro rules in the user prompt.`;
 
     // === CHARACTER CARD: GENERATE ALL FIELDS ===
     // Same whole-card rebuild; client applies all fields like import.
+    // WITH refinementNotes: keep schema + POV/Voice Anchor; append REFINE-ALL MODE (critique + preservation).
     if (action === 'generate-all') {
-      const { existingFields, specVersion } = body;
+      const { existingFields, specVersion, refinementNotes } = body;
       const isV3 = specVersion === 'v3' || specVersion === 'V3';
-      const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
-        `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
+      const notes = typeof refinementNotes === 'string' ? refinementNotes.trim() : '';
+      const useRefine = notes.length > 0;
+      let prompt = buildWholeCardUserPrompt(existingFields, isV3);
+      if (useRefine) {
+        prompt += buildRefineAllAppendix(notes);
+        prompt += `\n\nGENERATE-ALL REFINE MODE: Return the complete revised card JSON. Client will apply every field.`;
+      } else {
+        prompt += `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
+      }
 
       const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
       const flatHubCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
-      return new Response(JSON.stringify({ result: flatHubCard, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: flatHubCard, provider, ...(useRefine ? { refined: true } : {}) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: CONVERT / IMPORT ===

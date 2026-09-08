@@ -47,6 +47,7 @@ import {
 import { estimateCardTokens } from "@/lib/cardTokens";
 import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
+import { RefinePopover } from "@/components/tools/RefinePopover";
 import { formatLlmCascadeError } from "@/lib/llmErrors";
 import { convertImageFileToPng, deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
 import { isLorebookBoundToCard, loadLorebook, lorebookHasContent, toCharacterBook } from "@/lib/lorebookStorage";
@@ -72,6 +73,22 @@ import {
 } from "@/components/ui/dialog";
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+
+/** Non-empty trim for string or string[] card fields (gates Refine UI). */
+const fieldHasTrimContent = (value: unknown): boolean => {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some((v) => String(v ?? "").trim().length > 0);
+  return value != null && String(value).trim().length > 0;
+};
+
+/** Serialize current field value for edge refinementNotes currentValue. */
+const fieldCurrentValue = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((v) => String(v ?? "")).filter((s) => s.trim()).join("\n");
+  return value == null ? "" : String(value);
+};
+
 
 /** Prefer edge JSON `{ error }` over opaque Supabase "non-2xx" invoke messages. */
 const edgeInvokeError = async (error: unknown, data: unknown): Promise<string> => {
@@ -574,24 +591,30 @@ export const CharacterCardBuilder = () => {
     toast({ title: "Removed", description: "Card removed from the local list." });
   };
 
-  const handleGenerateField = async (fieldName: keyof CardData) => {
+  const handleGenerateField = async (fieldName: keyof CardData, notes?: string) => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
       return;
     }
+    const refinementNotes = typeof notes === "string" ? notes.trim() : "";
+    const useRefine = refinementNotes.length > 0;
     setGeneratingField(fieldName);
     try {
       // Pass EVERY labeled field (including the target) so the edge function can rebuild the whole card, then slice.
-      const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: {
-          action: "generate-field",
-          fieldName,
-          fieldDescription: fieldDescriptions[fieldName],
-          existingFields: card,
-          specVersion,
-          keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined,
-        },
-      });
+      // When refining, also pass refinementNotes + currentValue so edge uses targeted DELTA path.
+      const body: Record<string, unknown> = {
+        action: "generate-field",
+        fieldName,
+        fieldDescription: fieldDescriptions[fieldName],
+        existingFields: card,
+        specVersion,
+        keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined,
+      };
+      if (useRefine) {
+        body.refinementNotes = refinementNotes;
+        body.currentValue = fieldCurrentValue(card[fieldName]);
+      }
+      const { data, error } = await supabase.functions.invoke("venice-ai", { body });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error) {
         toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
@@ -621,6 +644,9 @@ export const CharacterCardBuilder = () => {
           const asStr = typeof sanitized === "string" ? sanitized : sanitized == null ? "" : String(sanitized);
           updateField(fieldName, sanitizeCardMacros(asStr, String(fieldName)));
         }
+        if (useRefine || data?.refined) {
+          toast({ title: "Refined", description: `Updated ${String(fieldName)} from your notes.` });
+        }
       }
     } catch (err) {
       toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate field."), variant: "destructive" });
@@ -629,16 +655,23 @@ export const CharacterCardBuilder = () => {
     }
   };
 
-  const handleGenerateAll = async () => {
+  const handleGenerateAll = async (notes?: string) => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
       return;
     }
+    const refinementNotes = typeof notes === "string" ? notes.trim() : "";
+    const useRefine = refinementNotes.length > 0;
     setGeneratingAll(true);
     try {
-      const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: { action: "generate-all", existingFields: card, generationMode: "default", specVersion },
-      });
+      const body: Record<string, unknown> = {
+        action: "generate-all",
+        existingFields: card,
+        generationMode: "default",
+        specVersion,
+      };
+      if (useRefine) body.refinementNotes = refinementNotes;
+      const { data, error } = await supabase.functions.invoke("venice-ai", { body });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error && !data?.result) {
         toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
@@ -667,7 +700,12 @@ export const CharacterCardBuilder = () => {
           }
           return updated;
         });
-        toast({ title: "Generated", description: "All fields have been generated/enhanced by AI." });
+        toast({
+          title: useRefine || data?.refined ? "Refined" : "Generated",
+          description: useRefine || data?.refined
+            ? "All fields revised from your notes."
+            : "All fields have been generated/enhanced by AI.",
+        });
       } else if (data?.parseError) {
         toast({
           title: "Partial result",
@@ -1004,10 +1042,19 @@ export const CharacterCardBuilder = () => {
             <Upload className="h-4 w-4" /> Import (File/PNG)
           </Button>
         </div>
-        <div className="flex items-center gap-1"><Button onClick={handleGenerateAll} disabled={generatingAll || aiUnavailable}>
+        <div className="flex items-center gap-1"><Button onClick={() => handleGenerateAll()} disabled={generatingAll || aiUnavailable}>
           {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           {generatingAll ? "Generating..." : "Generate All Fields"}
-        </Button><Button variant="outline" size="icon" onClick={() => setShowGenerationSettings((value) => !value)} aria-label="Generation settings" title="Generation settings"><Settings2 className="h-4 w-4" /></Button></div>
+        </Button>
+        <RefinePopover
+          compact={false}
+          label="Refine All"
+          disabled={generatingAll || aiUnavailable || generatingField !== null}
+          loading={generatingAll}
+          onRefine={(notes) => void handleGenerateAll(notes)}
+          data-testid="refine-all"
+        />
+        <Button variant="outline" size="icon" onClick={() => setShowGenerationSettings((value) => !value)} aria-label="Generation settings" title="Generation settings"><Settings2 className="h-4 w-4" /></Button></div>
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10">
@@ -1053,10 +1100,20 @@ export const CharacterCardBuilder = () => {
                   <CharCountIndicator current={String(card[field.key]).length} max={recommendedMax[field.key]} />
                 )}
                 {generatableFields.has(field.key) && (
-                  <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
-                    {generatingField === field.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                    {generatingField === field.key ? "Generating..." : "AI Generate"}
-                  </Button>
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || generatingAll || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
+                      {generatingField === field.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                      {generatingField === field.key ? "Generating..." : "AI Generate"}
+                    </Button>
+                    {fieldHasTrimContent(card[field.key]) && (
+                      <RefinePopover
+                        disabled={generatingField === field.key || generatingAll || aiUnavailable}
+                        loading={generatingField === field.key}
+                        onRefine={(notes) => void handleGenerateField(field.key, notes)}
+                        data-testid={`refine-field-${field.key}`}
+                      />
+                    )}
+                  </>
                 )}
               </div>
             </div>

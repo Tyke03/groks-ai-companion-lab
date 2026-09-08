@@ -6,22 +6,61 @@ const corsHeaders = {
 
 const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern example dialogue:
 
-- Produce exactly THREE separate example blocks.
+- Produce exactly THREE separate example blocks — NOT three hellos / greetings.
 - Each block starts with <START> alone on its own line.
 - Immediately after <START>, use {{user}}: and {{char}}: speaker labels (never User:, never the character's real name as a label, never Name:).
+- Macros MUST be lowercase {{user}} / {{char}} only. Ban {{User}}, {{Char}}, {{User's}}; use {{user}}'s. Ban "The User". Ban User:/Name: labels.
 - Do NOT wrap entire lines in quotes.
 - Put actions and inner thoughts in single asterisks, SillyTavern-style: *giggles* *she leans in close*
 - Do NOT mash actions with semicolons or put the whole exchange on one line.
 - Steer tone/length from the character's name, personality, scenario, first message, and description.
 - Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker (then shorter replies are OK).
 
+THREE-BLOCK PROGRESSION (required range — not three casual hellos):
+- Block1 Public/Casual mask: surface social mode; witty/polite/performative as fits {{char}}.
+- Block2 Private/Core dynamic: the relationship tension or power dynamic between {{char}} and {{user}} shows.
+- Block3 High stakes/Vulnerability: pressure, intimacy, risk, or emotional exposure — still in-character.
+
 Good shape (3 blocks; keep each exchange multi-line but concise):
 <START>
 {{user}}: Hey — ready to start?
 {{char}}: *smiles* Absolutely. *leans in* Follow my lead and we'll make magic.
 
+<START>
+{{user}}: That was… intense. Are we okay?
+{{char}}: *softens* With you? Always. *quieter* Don't make me say it twice.
+
+<START>
+{{user}}: If this goes wrong—
+{{char}}: *voice tight* Then we face it. *reaches for {{user}}'s hand* I'm not letting go.
 `;
 
+
+/** Per-field POV contracts: Correct vs Banned patterns. */
+const FIELD_POV_CONTRACT = `FIELD POV CONTRACT (Correct vs Banned):
+
+description | Correct: 3rd-person authorial about {{char}} (appearance, background, abilities). | Banned: "You are…", {{user}} first-person diary, chat-model directives.
+personality | Correct: 3rd-person / {{char}}-centric traits, quirks, behavioral patterns. | Banned: "You are…", {{user}} traits, mid-scene RP.
+scenario | Correct: 3rd-person setting/situation framing the chat. | Banned: {{user}} diary POV, full dialogue scripts.
+first_mes | Correct: in-character opening as {{char}} (*actions* + dialogue). | Banned: multi-<START> dumps, User:/Name: labels, OOC notes.
+mes_example | Correct: {{user}}:/{{char}}: example dialogue with 3-block progression. | Banned: three hellos, User:/real-name labels, {{User}} case.
+system_prompt | Correct: 2nd-person meta directives FOR the chat model ("Portray {{char}} as…"). | Banned: mid-scene RP, first-person {{user}}, "You are chatting with the user as yourself".
+post_history_instructions | Correct: short after-history reminder for the chat model (2nd-person meta). | Banned: long RP scenes, {{user}} diary.
+creator_notes | Correct: 3rd-person notes for OTHER creators on how to use the card. | Banned: in-character speech, system-prompt directives.
+`;
+
+/** Voice Anchor rules — embed in the SAME whole-card prompt (no separate Phase-1 API). */
+const VOICE_ANCHOR_RULES = `VOICE ANCHOR (bake into personality, first_mes, mes_example, system_prompt consistently):
+
+1) Dynamic: define how {{char}} relates to {{user}} vs the world (power, warmth, distance, rivalry). Keep that dynamic coherent across fields.
+2) Speech quirks: 2–4 durable verbal/mannerism tells (catchphrases, cadence, taboo words, physical tells) that recur in first_mes + mes_example + system_prompt.
+3) 3-block progression intent: mes_example must move Public/Casual mask → Private/Core dynamic → High stakes/Vulnerability (not three greetings).
+
+MACRO RULES (all fields):
+- Use lowercase {{user}} and {{char}} ONLY.
+- Ban {{User}}, {{Char}}, {{User's}}, {{user's}} — write {{user}}'s / {{char}}'s instead.
+- Ban "The User". Ban User: / Name: speaker labels (use {{user}}: / {{char}}:).
+`;
 
 /** CCV2/V3 field bible baked into every character generate call. */
 const CARD_FIELD_BIBLE = `CHARACTER CARD FIELD BIBLE (CCV2/V3 - follow exactly):
@@ -36,9 +75,10 @@ FIELDS & LENGTH BUDGETS (hard ceilings for finished text - stay under):
 - personality: {{char}} traits, behavioral patterns, quirks - NOT the user's traits. Prefer concise trait list or short prose. Budget <=1000 chars.
 - scenario: setting/situation framing the chat. Budget <=1000 chars. Do not write as {{user}} diary.
 - first_mes: {{char}} opening message. Use *asterisks for actions* and natural dialogue. Budget <=2000 chars.
-- mes_example: EXACTLY three SillyTavern example blocks:
+- mes_example: EXACTLY three SillyTavern example blocks (Block1 Public/Casual → Block2 Private/Core → Block3 High stakes/Vulnerability — NOT three hellos):
   * Each block starts with <START> alone on its own line
   * Then {{user}}: / {{char}}: labels (never User:, never the real name as a label)
+  * Macros lowercase only; {{user}}'s not {{User's}} / {{user's}}
   * *actions* in single asterisks; multi-line exchanges OK
   * Prefer richer examples unless personality says quiet/silent
   Encode as ONE JSON string with real newlines. Budget <=5000 chars.
@@ -119,6 +159,132 @@ function rewriteSpeakerLabels(text: string, charName: string): string {
   return out;
 }
 
+
+/** Edge mirror of client sanitizeCardMacros. */
+function sanitizeCardText(text: string, fieldName?: string): string {
+  if (!text) return text;
+  let out = text;
+  out = out.replace(/\{\{\s*User\s*\}\}/g, '{{user}}');
+  out = out.replace(/\{\{\s*Char\s*\}\}/g, '{{char}}');
+  out = out.replace(/\{\{\s*USER\s*\}\}/g, '{{user}}');
+  out = out.replace(/\{\{\s*CHAR\s*\}\}/g, '{{char}}');
+  out = out.replace(/\{\{\s*User'?s\s*\}\}/gi, "{{user}}'s");
+  out = out.replace(/\{\{\s*user'?s\s*\}\}/g, "{{user}}'s");
+  out = out.replace(/\{\{\s*Char'?s\s*\}\}/gi, "{{char}}'s");
+  out = out.replace(/\{\{\s*char'?s\s*\}\}/g, "{{char}}'s");
+  out = out.replace(/\bThe User\b/g, '{{user}}');
+  out = out.replace(/\bthe User\b/g, '{{user}}');
+  out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');
+  out = out.replace(/(^|\n)\s*Name\s*:/g, '$1{{char}}:');
+  if (fieldName === 'description' || fieldName === 'personality') {
+    out = out.replace(/^(\s*)You are\b/i, '$1{{char}} is');
+  }
+  return out;
+}
+
+function sanitizeWholeCardFields(card: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...card };
+  for (const key of CARD_FIELD_ORDER) {
+    if (!(key in out)) continue;
+    const value = out[key];
+    if (typeof value === 'string') {
+      out[key] = sanitizeCardText(value, key);
+    } else if (Array.isArray(value)) {
+      out[key] = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key) : v));
+    }
+  }
+  return out;
+}
+
+const FIELD_MAX_TOKENS: Record<string, number> = {
+  name: 64,
+  description: 900,
+  personality: 500,
+  scenario: 500,
+  first_mes: 900,
+  mes_example: 1800,
+  alternate_greetings: 1200,
+  group_only_greetings: 700,
+  creator_notes: 450,
+  tags: 120,
+  nickname: 64,
+  source: 120,
+  creator: 64,
+  character_version: 32,
+  post_history_instructions: 250,
+  system_prompt: 700,
+};
+
+const FIELD_POV_SNIPPETS: Record<string, string> = {
+  description: 'POV: 3rd-person authorial about {{char}}. Banned: "You are…", {{user}} diary.',
+  personality: 'POV: 3rd-person / {{char}}-centric traits. Banned: "You are…", {{user}} traits.',
+  scenario: 'POV: 3rd-person setting/situation. Banned: {{user}} diary, dialogue scripts.',
+  first_mes: 'POV: in-character opening as {{char}} (*actions* + dialogue). Banned: multi-<START>, User: labels.',
+  mes_example: 'POV: {{user}}:/{{char}}: with Block1 Public/Casual → Block2 Private/Core → Block3 High stakes/Vulnerability. Banned: three hellos.',
+  system_prompt: 'POV: 2nd-person meta directives FOR the chat model. Banned: mid-scene RP, {{user}} first-person.',
+  post_history_instructions: 'POV: short 2nd-person meta reminder for the chat model.',
+  creator_notes: 'POV: 3rd-person notes for other creators. Banned: in-character speech.',
+  tags: 'Comma-separated categorization tags only.',
+  name: 'Character display name only.',
+  nickname: 'Optional alias; else empty.',
+  alternate_greetings: 'Three distinct full openers like first_mes (IC as {{char}}).',
+  group_only_greetings: 'Group-chat openers acknowledging others; or empty.',
+  source: 'Source URL strings if known.',
+  creator: 'Creator handle if known.',
+  character_version: 'Version string if useful.',
+};
+
+function fieldHasContent(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some((v) => String(v ?? '').trim().length > 0);
+  return false;
+}
+
+/** Hybrid gate: enough context => fast targeted single-field; else whole-card-then-slice. */
+function hasEnoughSingleFieldContext(existingFields: Record<string, unknown> | null | undefined): boolean {
+  if (!existingFields || typeof existingFields !== 'object') return false;
+  let nonEmpty = 0;
+  let combinedLen = 0;
+  for (const key of CARD_FIELD_ORDER) {
+    const value = existingFields[key];
+    if (!fieldHasContent(value)) continue;
+    nonEmpty += 1;
+    if (typeof value === 'string') combinedLen += value.trim().length;
+    else if (Array.isArray(value)) combinedLen += value.map((v) => String(v ?? '').trim()).filter(Boolean).join('\n').length;
+  }
+  return nonEmpty >= 2 || combinedLen >= 200;
+}
+
+function buildSingleFieldUserPrompt(fieldName: string, existingFields: Record<string, unknown> | null | undefined, isV3: boolean): string {
+  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
+  const contextBlock = contextParts.length > 0
+    ? `LABELED CURRENT CARD CONTEXT (non-empty fields):\n${contextParts.join('\n\n')}`
+    : 'No other fields filled — invent from the field name and any keywords implied by empty context.';
+  const pov = FIELD_POV_SNIPPETS[fieldName] || 'Follow the field bible for this key.';
+  const bibleLine = (() => {
+    const lines = CARD_FIELD_BIBLE.split('\n');
+    const hit = lines.find((l) => l.trim().startsWith(`- ${fieldName}:`));
+    return hit ? hit.trim() : `- ${fieldName}: follow CCV2/V3 field bible.`;
+  })();
+  return `${CARD_FIELD_BIBLE}
+
+${FIELD_POV_CONTRACT}
+
+${VOICE_ANCHOR_RULES}
+
+${fieldName === 'mes_example' ? MES_EXAMPLE_FORMAT_RULES + '\n\n' : ''}TARGET FIELD: ${fieldName}
+FIELD BIBLE: ${bibleLine}
+${pov}
+
+${contextBlock}
+
+TASK: Write ONLY the text for "${fieldName}". Improve quality using the context. Stay consistent with Voice Anchor + POV.
+MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}; no The User; no User:/Name: labels.
+${isV3 ? 'V3 card context.' : 'V2-flat card context.'}
+
+Respond with ONLY the field text, no JSON, no fences, no commentary.`;
+}
+
 /**
  * Normalize foreign / nested whole-card JSON into flat Hub CardData keys only.
  * Does NOT invent character_book from lore; skips unknown wrappers after unwrap.
@@ -192,6 +358,12 @@ function normalizeWholeCardToHub(card: Record<string, unknown> | null | undefine
       value = value.map((v) => rewriteSpeakerLabels(String(v ?? ""), charName));
     }
 
+    if (typeof value === 'string') {
+      value = sanitizeCardText(value, key);
+    } else if (Array.isArray(value)) {
+      value = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key) : v));
+    }
+
     result[key] = value;
   }
 
@@ -247,7 +419,7 @@ async function callLLMForWholeCard(
     }
     const { card, parseError } = parseWholeCardJson(content);
     if (!parseError && card) {
-      const flat = normalizeWholeCardToHub(card);
+      const flat = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
       return { content, provider, card: flat };
     }
     const why = looksLikeTruncatedCardJson(content) ? 'truncated/incomplete JSON' : 'invalid JSON';
@@ -342,6 +514,10 @@ function buildWholeCardUserPrompt(existingFields: Record<string, unknown> | null
 
   return `${CARD_FIELD_BIBLE}
 
+${FIELD_POV_CONTRACT}
+
+${VOICE_ANCHOR_RULES}
+
 ${MES_EXAMPLE_FORMAT_RULES}
 
 TASK: Build a COMPLETE proper Character Card as a single FLAT JSON object (SillyTavern CCV2/V3 Hub keys — NOT a foreign playground envelope).
@@ -374,10 +550,17 @@ You reorganize and enrich incomplete cards into ONE flat JSON object matching th
 You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt.
 ALWAYS respond with valid JSON only — no markdown, no explanation.
 
+VOICE ANCHOR (mandatory across the card): Dynamic ({{char}} vs {{user}} vs world) + Speech quirks + mes_example 3-block progression (Public/Casual → Private/Core → High stakes/Vulnerability). Embed in the same whole-card output — no separate phase.
+
+POV: profile fields = 3rd-person authorial; first_mes = IC opening; mes_example = {{user}}/{{char}}; system_prompt = 2nd-person meta directives for the chat model.
+
+MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}/{{user's}}; ban The User; ban User:/Name: labels.
+
 OUTPUT RULES (non-negotiable):
 - ONLY the Hub flat schema. Fill every key; use "" or [] when empty.
 - FORBIDDEN: character_card wrappers, spec / spec_version / spec_url, nested data-only envelopes as the sole payload, lore as a top-level field replacing card fields, personality as a JSON array, real-name speaker labels (e.g. Roxy:), User: labels.
-- personality = ONE string. first_mes = one opening (not multi-<START>). mes_example uses {{user}}/{{char}} only.`;
+- personality = ONE string. first_mes = one opening (not multi-<START>). mes_example uses {{user}}/{{char}} only with three progression blocks — not three hellos.`;
+
 
 
 function formatExistingFieldValue(value: unknown): string | null {
@@ -861,7 +1044,7 @@ ${text}`;
     }
 
     // === CHARACTER CARD: GENERATE SINGLE FIELD ===
-    // Whole-card rebuild then slice: ingest ALL labeled fields (including F), return ONLY F.
+    // HYBRID: enough context => fast targeted single-field (plain text); else whole-card-then-slice.
     if (action === 'generate-field') {
       const { fieldName, existingFields, specVersion } = body;
       if (!fieldName) {
@@ -869,19 +1052,39 @@ ${text}`;
       }
 
       const isV3 = specVersion === 'v3' || specVersion === 'V3';
+      const fieldKey = String(fieldName);
+      const useTargeted = hasEnoughSingleFieldContext(existingFields);
+
+      if (useTargeted) {
+        const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3);
+        const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
+        const singleSystem = `You are an expert Character Card field author for SillyTavern CCV2/V3.
+Write ONLY the requested field text. No JSON, no markdown fences, no commentary.
+Follow Voice Anchor + POV + macro rules in the user prompt.`;
+        const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
+        let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
+        // Strip accidental fences
+        if (typeof fieldValue === 'string') {
+          const fence = fieldValue.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
+          if (fence) fieldValue = fence[1].trim();
+          fieldValue = sanitizeCardText(fieldValue, fieldKey);
+        }
+        return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: false, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
-        `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldName}". Still produce the FULL card JSON (all keys). The current text in "${fieldName}" is labeled context above and must be digested like every other field.`;
+        `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldKey}". Still produce the FULL card JSON (all keys). The current text in "${fieldKey}" is labeled context above and must be digested like every other field.`;
 
       const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
-      const flatCard = normalizeWholeCardToHub(card);
-      const fieldValue = extractCardField(flatCard, String(fieldName));
+      const flatCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
+      const fieldValue = extractCardField(flatCard, fieldKey);
       if (fieldValue === undefined) {
-        return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldName}`, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldKey}`, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       // Return ONLY the requested field value - client must not apply other fields.
-      return new Response(JSON.stringify({ result: fieldValue, fieldName, wholeCardBuilt: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: GENERATE ALL FIELDS ===
@@ -894,7 +1097,7 @@ ${text}`;
 
       const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
-      const flatHubCard = normalizeWholeCardToHub(card);
+      const flatHubCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
       return new Response(JSON.stringify({ result: flatHubCard, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 

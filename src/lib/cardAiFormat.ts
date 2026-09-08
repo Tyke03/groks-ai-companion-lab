@@ -6,23 +6,33 @@
 /** Prompt fragment describing required mes_example format (also mirrored in venice-ai). */
 export const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern example dialogue:
 
-- Produce exactly THREE separate example blocks.
+- Produce exactly THREE separate example blocks — NOT three hellos / greetings.
 - Each block starts with <START> alone on its own line.
 - Immediately after <START>, use {{user}}: and {{char}}: speaker labels (never User:, never the character's real name as a label, never Name:).
+- Macros MUST be lowercase {{user}} / {{char}} only. Ban {{User}}, {{Char}}, {{User's}}; use {{user}}'s. Ban "The User". Ban User:/Name: labels.
 - Do NOT wrap entire lines in quotes.
 - Put actions and inner thoughts in single asterisks, SillyTavern-style: *giggles* *she leans in close*
 - Do NOT mash actions with semicolons or put the whole exchange on one line.
 - Steer tone/length from the character's name, personality, scenario, first message, and description.
 - Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker (then shorter replies are OK).
 
+THREE-BLOCK PROGRESSION (required range — not three casual hellos):
+- Block1 Public/Casual mask: surface social mode; witty/polite/performative as fits {{char}}.
+- Block2 Private/Core dynamic: the relationship tension or power dynamic between {{char}} and {{user}} shows.
+- Block3 High stakes/Vulnerability: pressure, intimacy, risk, or emotional exposure — still in-character.
+
 Good shape:
 <START>
-{{user}}: Hey Riley, I'm so excited to be working with you.
-{{char}}: *giggles* I'm excited to have you on board, too! I think we're going to make some magic happen. *she leans in close* But first, let's get one thing straight - I'm the boss, and you're going to have to do what I say. *she winks*
+{{user}}: Hey — ready to start?
+{{char}}: *smiles* Absolutely. *leans in* Follow my lead and we'll make magic.
 
 <START>
-{{user}}: ...
-{{char}}: ...
+{{user}}: That was… intense. Are we okay?
+{{char}}: *softens* With you? Always. *quieter* Don't make me say it twice.
+
+<START>
+{{user}}: If this goes wrong—
+{{char}}: *voice tight* Then we face it. *reaches for {{user}}'s hand* I'm not letting go.
 `;
 
 /**
@@ -158,6 +168,52 @@ function joinStringOrArray(value: unknown, sep = ', '): string {
   return String(value);
 }
 
+/**
+ * Fix common macro / POV mistakes from LLM card text.
+ * Lowercases {{User}}/{{Char}}, fixes possessives, rewrites User: lines,
+ * and (for description/personality) turns leading "You are" into "{{char}} is".
+ */
+export function sanitizeCardMacros(text: string, fieldName?: string): string {
+  if (!text) return text;
+  let out = text;
+
+  // Case macros: {{User}} / {{Char}} / mixed → lowercase
+  out = out.replace(/\{\{\s*User\s*\}\}/g, '{{user}}');
+  out = out.replace(/\{\{\s*Char\s*\}\}/g, '{{char}}');
+  out = out.replace(/\{\{\s*USER\s*\}\}/g, '{{user}}');
+  out = out.replace(/\{\{\s*CHAR\s*\}\}/g, '{{char}}');
+
+  // Possessives: {{User's}} / {{user's}} / {{Char's}} → {{user}}'s / {{char}}'s
+  out = out.replace(/\{\{\s*User'?s\s*\}\}/gi, "{{user}}'s");
+  out = out.replace(/\{\{\s*user'?s\s*\}\}/g, "{{user}}'s");
+  out = out.replace(/\{\{\s*Char'?s\s*\}\}/gi, "{{char}}'s");
+  out = out.replace(/\{\{\s*char'?s\s*\}\}/g, "{{char}}'s");
+
+  // Ban "The User" as a noun phrase
+  out = out.replace(/\bThe User\b/g, '{{user}}');
+  out = out.replace(/\bthe User\b/g, '{{user}}');
+
+  // Speaker labels at line start
+  out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');
+  out = out.replace(/(^|\n)\s*Name\s*:/g, '$1{{char}}:');
+
+  // description/personality only: leading "You are" → "{{char}} is"
+  if (fieldName === 'description' || fieldName === 'personality') {
+    out = out.replace(/^(\s*)You are\b/i, '$1{{char}} is');
+  }
+
+  return out;
+}
+
+/** Sanitize a single field value (string or list of strings). */
+export function sanitizeFieldText(value: unknown, fieldName?: string): unknown {
+  if (typeof value === 'string') return sanitizeCardMacros(value, fieldName);
+  if (Array.isArray(value)) {
+    return value.map((v) => (typeof v === 'string' ? sanitizeCardMacros(v, fieldName) : v));
+  }
+  return value;
+}
+
 /** Rewrite User:/Name: speaker labels to {{user}}:/{{char}}: */
 export function rewriteSpeakerLabels(text: string, charName: string): string {
   if (!text) return text;
@@ -182,7 +238,7 @@ export function rewriteSpeakerLabels(text: string, charName: string): string {
 /**
  * Normalize foreign / nested whole-card JSON into flat Hub CardData keys only.
  * Unwraps character_card; prefers nested .data; joins personality/tags arrays to strings;
- * skips lore (no character_book invent); rewrites speaker labels.
+ * skips lore (no character_book invent); rewrites speaker labels; sanitizes macros.
  */
 export function normalizeWholeCardToHub(
   card: Record<string, unknown> | null | undefined,
@@ -257,6 +313,9 @@ export function normalizeWholeCardToHub(
       value = value.map((v) => rewriteSpeakerLabels(String(v ?? ''), charName));
     }
 
+    // Sanitize macros on all string fields + alternate_greetings items
+    value = sanitizeFieldText(value, key);
+
     result[key] = value;
   }
 
@@ -293,6 +352,6 @@ export function applyGenerateFieldResult(
       if (extracted !== undefined) return { value: extracted, slicedFromWholeCard: true };
     }
   }
-  return { value: result, slicedFromWholeCard: false };
+  // Plain string / list path — still sanitize
+  return { value: sanitizeFieldText(result, fieldName), slicedFromWholeCard: false };
 }
-

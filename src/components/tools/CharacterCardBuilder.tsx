@@ -32,7 +32,7 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
-import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult, normalizeWholeCardToHub } from "@/lib/cardAiFormat";
+import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult, normalizeWholeCardToHub, sanitizeFieldText, sanitizeCardMacros } from "@/lib/cardAiFormat";
 import {
   createNewCard,
   deleteCard,
@@ -610,14 +610,18 @@ export const CharacterCardBuilder = () => {
       if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
         // Safety: if a whole card object sneaks through, apply ONLY fieldName.
         const { value } = applyGenerateFieldResult(String(fieldName), data.result);
+        // Sanitize macros/POV slips (normalizeWholeCardToHub already sanitizes hub path).
+        const sanitized = sanitizeFieldText(value, String(fieldName));
         if (ARRAY_FIELDS.has(fieldName)) {
           const max = fieldName === "alternate_greetings" ? 3 : undefined;
-          updateList(fieldName, parseAiStringList(value, { max }));
+          updateList(fieldName, parseAiStringList(sanitized, { max }).map((s) => sanitizeCardMacros(s, String(fieldName))));
         } else if (fieldName === "mes_example" || fieldName === "first_mes") {
-          updateField(fieldName, normalizeAiMultiline(String(value ?? "")));
+          updateField(fieldName, sanitizeCardMacros(normalizeAiMultiline(String(sanitized ?? "")), String(fieldName)));
         } else {
-          updateField(fieldName, typeof value === "string" ? value : value == null ? "" : String(value));
+          const asStr = typeof sanitized === "string" ? sanitized : sanitized == null ? "" : String(sanitized);
+          updateField(fieldName, sanitizeCardMacros(asStr, String(fieldName)));
         }
+      }
       }
     } catch (err) {
       toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate field."), variant: "destructive" });

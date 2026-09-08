@@ -64,6 +64,140 @@ const CARD_FIELD_ORDER = [
   'source', 'creator', 'character_version', 'post_history_instructions', 'system_prompt',
 ];
 
+/** Exact blank Hub Gen All response shape (V2-flat strings; V3 array fields kept as arrays). */
+const RESPONSE_SCHEMA_TEMPLATE = `{
+  "name": "",
+  "description": "",
+  "personality": "",
+  "scenario": "",
+  "first_mes": "",
+  "mes_example": "",
+  "alternate_greetings": ["", "", ""],
+  "group_only_greetings": [],
+  "creator_notes": "",
+  "tags": "",
+  "nickname": "",
+  "source": [],
+  "creator": "",
+  "character_version": "",
+  "post_history_instructions": "",
+  "system_prompt": ""
+}`;
+
+const ARRAY_CARD_FIELDS = new Set([
+  'alternate_greetings',
+  'group_only_greetings',
+  'source',
+]);
+
+function joinStringOrArray(value: unknown, sep = ", "): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v ?? "").trim()).filter(Boolean).join(sep);
+  }
+  if (value == null) return "";
+  return String(value);
+}
+
+function rewriteSpeakerLabels(text: string, charName: string): string {
+  if (!text) return text;
+  let out = text;
+  out = out.replace(/(^|\n)\s*User\s*:/g, "$1{{user}}:");
+  const name = (charName || "").trim();
+  if (!name) return out;
+  const variants = new Set<string>();
+  variants.add(name);
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) {
+    variants.add(parts[0]);
+    variants.add(parts[parts.length - 1]);
+  }
+  for (const variant of variants) {
+    const esc = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp("(^|\\n)\\s*" + esc + "\\s*:", "gi"), "$1{{char}}:");
+  }
+  return out;
+}
+
+/**
+ * Normalize foreign / nested whole-card JSON into flat Hub CardData keys only.
+ * Does NOT invent character_book from lore; skips unknown wrappers after unwrap.
+ */
+function normalizeWholeCardToHub(card: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (!card || typeof card !== 'object' || Array.isArray(card)) return {};
+
+  let root: Record<string, unknown> = { ...card };
+
+  const wrapped = root.character_card;
+  if (wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)) {
+    root = { ...(wrapped as Record<string, unknown>) };
+  }
+
+  const dataObj = root.data;
+  const dataRec = dataObj && typeof dataObj === 'object' && !Array.isArray(dataObj)
+    ? (dataObj as Record<string, unknown>)
+    : null;
+  const dataLooksLikeCard = !!(dataRec && (
+    typeof dataRec.name === 'string' ||
+    typeof dataRec.description === 'string' ||
+    typeof dataRec.personality === 'string' ||
+    typeof dataRec.first_mes === 'string'
+  ));
+
+  const merged: Record<string, unknown> = { ...root };
+  if (dataLooksLikeCard && dataRec) {
+    for (const key of CARD_FIELD_ORDER) {
+      if (key in dataRec && dataRec[key] !== undefined && dataRec[key] !== null) {
+        merged[key] = dataRec[key];
+      }
+    }
+  }
+
+  // lore is not a Hub flat field — skip (do not invent character_book)
+  if (Array.isArray(merged.personality)) {
+    merged.personality = joinStringOrArray(merged.personality, ", ");
+  }
+  if (Array.isArray(merged.tags)) {
+    merged.tags = joinStringOrArray(merged.tags, ", ");
+  }
+
+  const charName = joinStringOrArray(merged.name).trim();
+  const result: Record<string, unknown> = {};
+
+  for (const key of CARD_FIELD_ORDER) {
+    if (!(key in merged) || merged[key] === undefined) {
+      result[key] = ARRAY_CARD_FIELDS.has(key) ? [] : "";
+      continue;
+    }
+    let value = merged[key];
+
+    if (key === 'personality' || key === 'tags') {
+      value = joinStringOrArray(value, ", ");
+    } else if (ARRAY_CARD_FIELDS.has(key)) {
+      if (typeof value === 'string') {
+        const t = value.trim();
+        value = t ? [t] : [];
+      } else if (!Array.isArray(value)) {
+        value = value == null ? [] : [String(value)];
+      } else {
+        value = value.map((v) => String(v ?? ""));
+      }
+    } else if (typeof value !== 'string' && !Array.isArray(value)) {
+      value = value == null ? "" : String(value);
+    }
+
+    if (key === 'mes_example' || key === 'first_mes') {
+      value = rewriteSpeakerLabels(String(value ?? ""), charName);
+    } else if (key === 'alternate_greetings' && Array.isArray(value)) {
+      value = value.map((v) => rewriteSpeakerLabels(String(v ?? ""), charName));
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
 function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null; parseError: boolean } {
   if (!raw || typeof raw !== 'string') return { card: null, parseError: true };
   let text = raw.trim();
@@ -112,7 +246,10 @@ async function callLLMForWholeCard(
       throw new Error('returned empty (0 chars)');
     }
     const { card, parseError } = parseWholeCardJson(content);
-    if (!parseError && card) return { content, provider, card };
+    if (!parseError && card) {
+      const flat = normalizeWholeCardToHub(card);
+      return { content, provider, card: flat };
+    }
     const why = looksLikeTruncatedCardJson(content) ? 'truncated/incomplete JSON' : 'invalid JSON';
     throw new Error(`${why} (${content?.length || 0} chars)`);
   };
@@ -207,26 +344,40 @@ function buildWholeCardUserPrompt(existingFields: Record<string, unknown> | null
 
 ${MES_EXAMPLE_FORMAT_RULES}
 
-TASK: Build a COMPLETE proper Character Card as a single JSON object with these keys:
-${CARD_FIELD_ORDER.join(', ')}
+TASK: Build a COMPLETE proper Character Card as a single FLAT JSON object (SillyTavern CCV2/V3 Hub keys — NOT a foreign playground envelope).
+
+This is the ONLY valid response shape (fill every key; use "" or [] when empty):
+${RESPONSE_SCHEMA_TEMPLATE}
 
 ${contextBlock}
 
 REASONING ORDER: flesh out name -> description -> personality -> scenario -> first_mes -> mes_example -> alternate_greetings -> group_only_greetings -> creator_notes -> tags -> nickname/source/creator/version -> post_history_instructions -> system_prompt LAST (most inferential instructions for the chat model given the finished card).
 
-OUTPUT RULES:
-- Respond with VALID JSON ONLY (no markdown fences, no commentary).
-- mes_example must be a single string with real newlines and exactly three <START> blocks.
-- alternate_greetings must be an array of exactly 3 strings.
+OUTPUT RULES (STRICT — Hub Gen All / import expect ONLY this flat schema):
+- Respond with VALID JSON ONLY (no markdown fences, no commentary). ONLY the schema above.
+- FORBIDDEN wrappers / dialects: character_card, spec, spec_version, spec_url, data envelopes, lore as a top-level replacement for fields, book, personality as a JSON array, Name:/Roxy:-style speaker labels.
+- personality MUST be ONE string (comma-separated traits OK). NEVER a JSON array.
+- tags MUST be ONE comma-separated string (Hub UI). V3 export may later split tags; Gen All still returns a string.
+- first_mes must be a SINGLE opening message for {{char}} — never multi-<START> dialogue dumps.
+- mes_example must be a single string with real newlines and exactly three <START> blocks; use {{user}}:/{{char}}: labels only — NEVER real character name labels, never User:.
+- alternate_greetings must be an array of exactly 3 strings (each a full opener like first_mes).
 - group_only_greetings must be an array (1-3 strings preferred; [] if not useful).
 - source must be an array of strings (or []).
 - Respect length budgets so Gen All does not blow limits.
 - Personality = {{char}} traits only. Never {{user}} first-person in personality/description/etc.
 - system_prompt = instructions FOR the chat model, not mid-scene RP.
-${isV3 ? '- Prefer V3 list fields (source, group_only_greetings) as arrays.' : '- Include group_only_greetings as an array when useful; otherwise [].'}`;
+${isV3 ? '- V3 note: keep source / group_only_greetings / alternate_greetings as arrays; tags still a string in this Hub response.' : '- V2-flat: same schema; include group_only_greetings as an array when useful; otherwise [].'}`;
 }
 
-const CARD_AUTHOR_SYSTEM = `You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3). You reorganize and enrich incomplete cards into coherent structured JSON. You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt. ALWAYS respond with valid JSON only - no markdown, no explanation.`;
+const CARD_AUTHOR_SYSTEM = `You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3) for the AI Companion Hub Gen All pipeline.
+You reorganize and enrich incomplete cards into ONE flat JSON object matching the Hub RESPONSE SCHEMA exactly (keys listed in the user prompt blank template).
+You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt.
+ALWAYS respond with valid JSON only — no markdown, no explanation.
+
+OUTPUT RULES (non-negotiable):
+- ONLY the Hub flat schema. Fill every key; use "" or [] when empty.
+- FORBIDDEN: character_card wrappers, spec / spec_version / spec_url, nested data-only envelopes as the sole payload, lore as a top-level field replacing card fields, personality as a JSON array, real-name speaker labels (e.g. Roxy:), User: labels.
+- personality = ONE string. first_mes = one opening (not multi-<START>). mes_example uses {{user}}/{{char}} only.`;
 
 
 function formatExistingFieldValue(value: unknown): string | null {
@@ -723,7 +874,8 @@ ${text}`;
 
       const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
-      const fieldValue = extractCardField(card, String(fieldName));
+      const flatCard = normalizeWholeCardToHub(card);
+      const fieldValue = extractCardField(flatCard, String(fieldName));
       if (fieldValue === undefined) {
         return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldName}`, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
@@ -742,7 +894,8 @@ ${text}`;
 
       const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
 
-      return new Response(JSON.stringify({ result: card, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const flatHubCard = normalizeWholeCardToHub(card);
+      return new Response(JSON.stringify({ result: flatHubCard, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: CONVERT / IMPORT ===

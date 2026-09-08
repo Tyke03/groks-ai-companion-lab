@@ -50,6 +50,9 @@ export function sanitizeOpaque(value: unknown): unknown {
 function asString(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v ?? "").trim()).filter(Boolean).join(", ");
+  }
   return "";
 }
 
@@ -85,7 +88,11 @@ export function detectCardFormat(json: unknown): CardFormat | null {
   // Flat V1 card: requires `name` plus at least one other V1 core field.
   if (
     typeof json.name === "string" &&
-    CORE_V1_FIELDS.some((field) => field !== "name" && typeof json[field] === "string")
+    CORE_V1_FIELDS.some((field) => {
+      if (field === "name") return false;
+      const v = json[field];
+      return typeof v === "string" || Array.isArray(v);
+    })
   ) {
     return "v1";
   }
@@ -194,6 +201,10 @@ function collectPreserved(
  * Throws `CardImportError` for malformed or unrecognized input.
  */
 export function importCard(json: unknown): CardImportResult {
+  // Easy unwrap for foreign character_card envelopes before format detection
+  if (isRecord(json) && isRecord(json.character_card)) {
+    json = json.character_card;
+  }
   const format = detectCardFormat(json);
   if (!format || !isRecord(json)) {
     throw new CardImportError(

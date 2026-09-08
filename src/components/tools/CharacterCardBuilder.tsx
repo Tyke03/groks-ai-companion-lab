@@ -32,7 +32,7 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
-import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult } from "@/lib/cardAiFormat";
+import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult, normalizeWholeCardToHub } from "@/lib/cardAiFormat";
 import {
   createNewCard,
   deleteCard,
@@ -642,9 +642,10 @@ export const CharacterCardBuilder = () => {
         return;
       }
       if (data?.result && typeof data.result === "object" && !data.parseError) {
+        const flatResult = normalizeWholeCardToHub(data.result as Record<string, unknown>);
         setCard((prev) => {
           const updated = { ...prev };
-          for (const [key, value] of Object.entries(data.result)) {
+          for (const [key, value] of Object.entries(flatResult)) {
             if (key in updated) {
               const record = updated as Record<string, unknown>;
               if (ARRAY_FIELDS.has(key)) {

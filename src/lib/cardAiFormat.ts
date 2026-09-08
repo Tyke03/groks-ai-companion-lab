@@ -135,6 +135,134 @@ export function extractCardField(card: Record<string, unknown>, fieldName: strin
   return undefined;
 }
 
+
+/** Hub whole-card field order (mirrors venice-ai CARD_FIELD_ORDER). */
+export const HUB_CARD_FIELD_ORDER = [
+  'name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example',
+  'alternate_greetings', 'group_only_greetings', 'creator_notes', 'tags', 'nickname',
+  'source', 'creator', 'character_version', 'post_history_instructions', 'system_prompt',
+] as const;
+
+const ARRAY_CARD_FIELDS = new Set([
+  'alternate_greetings',
+  'group_only_greetings',
+  'source',
+]);
+
+function joinStringOrArray(value: unknown, sep = ', '): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v ?? '').trim()).filter(Boolean).join(sep);
+  }
+  if (value == null) return '';
+  return String(value);
+}
+
+/** Rewrite User:/Name: speaker labels to {{user}}:/{{char}}: */
+export function rewriteSpeakerLabels(text: string, charName: string): string {
+  if (!text) return text;
+  let out = text;
+  out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');
+  const name = (charName || '').trim();
+  if (!name) return out;
+  const variants = new Set<string>();
+  variants.add(name);
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) {
+    variants.add(parts[0]);
+    variants.add(parts[parts.length - 1]);
+  }
+  for (const variant of variants) {
+    const esc = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp('(^|\\n)\\s*' + esc + '\\s*:', 'gi'), '$1{{char}}:');
+  }
+  return out;
+}
+
+/**
+ * Normalize foreign / nested whole-card JSON into flat Hub CardData keys only.
+ * Unwraps character_card; prefers nested .data; joins personality/tags arrays to strings;
+ * skips lore (no character_book invent); rewrites speaker labels.
+ */
+export function normalizeWholeCardToHub(
+  card: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!card || typeof card !== 'object' || Array.isArray(card)) return {};
+
+  let root: Record<string, unknown> = { ...card };
+
+  const wrapped = root.character_card;
+  if (wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)) {
+    root = { ...(wrapped as Record<string, unknown>) };
+  }
+
+  const dataObj = root.data;
+  const dataRec =
+    dataObj && typeof dataObj === 'object' && !Array.isArray(dataObj)
+      ? (dataObj as Record<string, unknown>)
+      : null;
+  const dataLooksLikeCard = !!(
+    dataRec &&
+    (typeof dataRec.name === 'string' ||
+      typeof dataRec.description === 'string' ||
+      typeof dataRec.personality === 'string' ||
+      typeof dataRec.first_mes === 'string')
+  );
+
+  const merged: Record<string, unknown> = { ...root };
+  if (dataLooksLikeCard && dataRec) {
+    for (const key of HUB_CARD_FIELD_ORDER) {
+      if (key in dataRec && dataRec[key] !== undefined && dataRec[key] !== null) {
+        merged[key] = dataRec[key];
+      }
+    }
+  }
+
+  // lore is not a Hub flat field — skip
+  if (Array.isArray(merged.personality)) {
+    merged.personality = joinStringOrArray(merged.personality, ', ');
+  }
+  if (Array.isArray(merged.tags)) {
+    merged.tags = joinStringOrArray(merged.tags, ', ');
+  }
+
+  const charName = joinStringOrArray(merged.name).trim();
+  const result: Record<string, unknown> = {};
+
+  for (const key of HUB_CARD_FIELD_ORDER) {
+    if (!(key in merged) || merged[key] === undefined) {
+      result[key] = ARRAY_CARD_FIELDS.has(key) ? [] : '';
+      continue;
+    }
+    let value = merged[key];
+
+    if (key === 'personality' || key === 'tags') {
+      value = joinStringOrArray(value, ', ');
+    } else if (ARRAY_CARD_FIELDS.has(key)) {
+      if (typeof value === 'string') {
+        const t = value.trim();
+        value = t ? [t] : [];
+      } else if (!Array.isArray(value)) {
+        value = value == null ? [] : [String(value)];
+      } else {
+        value = value.map((v) => String(v ?? ''));
+      }
+    } else if (typeof value !== 'string' && !Array.isArray(value)) {
+      value = value == null ? '' : String(value);
+    }
+
+    if (key === 'mes_example' || key === 'first_mes') {
+      value = rewriteSpeakerLabels(String(value ?? ''), charName);
+    } else if (key === 'alternate_greetings' && Array.isArray(value)) {
+      value = value.map((v) => rewriteSpeakerLabels(String(v ?? ''), charName));
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
 /**
  * Apply AI generate-field result: ONLY the requested field changes.
  * If the API mistakenly returns a whole card object, slice to fieldName.
@@ -145,10 +273,23 @@ export function applyGenerateFieldResult(
 ): { value: unknown; slicedFromWholeCard: boolean } {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
     const obj = result as Record<string, unknown>;
+    // Detect whole-card / foreign envelope on the RAW object (normalize fills every key).
+    const probe = (typeof obj.character_card === 'object' && obj.character_card && !Array.isArray(obj.character_card))
+      ? (obj.character_card as Record<string, unknown>)
+      : obj;
     const known = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt'];
-    const hits = known.filter((k) => k in obj).length;
-    if (hits >= 3 || fieldName in obj) {
-      const extracted = extractCardField(obj, fieldName);
+    const hits = known.filter((k) => {
+      if (k in probe) return true;
+      const d = probe.data;
+      return !!(d && typeof d === 'object' && !Array.isArray(d) && k in (d as Record<string, unknown>));
+    }).length;
+    if (
+      hits >= 3 ||
+      fieldName in probe ||
+      (probe.data && typeof probe.data === 'object' && !Array.isArray(probe.data) && fieldName in (probe.data as Record<string, unknown>))
+    ) {
+      const flat = normalizeWholeCardToHub(obj);
+      const extracted = extractCardField(flat, fieldName);
       if (extracted !== undefined) return { value: extracted, slicedFromWholeCard: true };
     }
   }

@@ -3,7 +3,9 @@ import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { Layout } from "@/components/Layout";
 import { chatbots, categoryLabels, contentLevelLabels, type Chatbot } from "@/data/chatbots";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Check, X, Search, RotateCcw } from "lucide-react";
+import { ArrowLeft, Check, X, Search, RotateCcw, Wrench } from "lucide-react";
+import { toolsPlatformPath } from "@/lib/workbenchBridges";
+import { buildWorkbenchSuggestions } from "@/lib/compareWorkbenchSuggestions";
 import { Input } from "@/components/ui/input";
 
 /* ── Criterion groups ────────────────────────────────────────────────────── */
@@ -56,6 +58,7 @@ const criterionGroups: CriterionGroup[] = [
     ],
   },
 ];
+
 
 /* ── Unique categories for filter dropdown ───────────────────────────────── */
 
@@ -282,6 +285,53 @@ const Compare = () => {
               >
                 Clear all
               </button>
+            </div>
+          )}
+
+          {selected.length > 0 && (
+            <div className="mt-5 rounded-xl border border-border bg-secondary/20 p-4 space-y-3" data-testid="compare-workbench-handoff">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Open in Workbench (suggestions)</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Soft handoff only — stamps catalog notes as verified vs unverified. Workbench will not enforce token ceilings or hard limits from these values.
+                  </p>
+                </div>
+                <Link
+                  to={toolsPlatformPath(selected.map((b) => b.slug), "character")}
+                  className="inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-testid="compare-open-workbench"
+                >
+                  <Wrench className="h-4 w-4" /> Open in Workbench
+                </Link>
+              </div>
+              <ul className="space-y-3">
+                {selected.map((bot) => {
+                  const suggestions = buildWorkbenchSuggestions(bot);
+                  return (
+                    <li key={bot.slug} className="rounded-lg border border-border/70 bg-background/40 px-3 py-2">
+                      <p className="text-sm font-medium text-foreground">{bot.name}</p>
+                      <ul className="mt-1.5 space-y-1">
+                        {suggestions.map((s) => (
+                          <li key={`${bot.slug}-${s.label}`} className="text-xs text-muted-foreground">
+                            <span
+                              className={`mr-1.5 inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                s.trust === "verified"
+                                  ? "border-emerald-500/40 text-emerald-400"
+                                  : "border-amber-500/40 text-amber-400"
+                              }`}
+                            >
+                              {s.trust}
+                            </span>
+                            <span className="text-foreground/90">{s.label}:</span> {s.value}
+                            <span className="block pl-0 sm:pl-16 text-[11px] opacity-80">{s.reason}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
         </section>

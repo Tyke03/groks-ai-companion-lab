@@ -86,7 +86,7 @@ describe("CharacterCardBuilder multi-card + lossy V2", () => {
 
   it("keeps portrait label copy for optional replace", () => {
     render(<CharacterCardBuilder />);
-    expect(screen.getByTestId("png-choose-button")).toHaveTextContent(/Choose PNG/i);
+    expect(screen.getByTestId("png-choose-button")).toHaveTextContent(/Choose image/i);
     expect(screen.getByTestId("png-portrait-panel")).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Copy, Check, Sparkles, Upload, Loader2, Wand2, WifiOff, ListChecks } from "lucide-react";
+import { Copy, Check, Sparkles, Upload, Loader2, Wand2, WifiOff, ListChecks, FileDown } from "lucide-react";
 import {
   getPrimaryCompatibility,
   normalizeLocalTemplates,
@@ -19,6 +19,24 @@ import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from 
 import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
 import { formatSlotContext, mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
+import { filledUniqueKeys, preserveOverlappingVariables } from "@/lib/promptVariableSwitch";
+import {
+  getActiveSlot,
+  loadCardLibrary,
+  saveCardLibrary,
+  updateActiveSlot,
+} from "@/lib/cardStorage";
+import { stashWorkbenchBridge } from "@/lib/workbenchBridges";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const customKey = "ai-companion-hub-custom-prompts";
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -36,7 +54,10 @@ export const PromptBuilder = () => {
   const [rawContext, setRawContext] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [draftStatus, setDraftStatus] = useState<"idle" | "restored" | "saved">("idle");
+  const [pendingTemplate, setPendingTemplate] = useState<PromptTemplate | null>(null);
+  const [pendingDiscardKeys, setPendingDiscardKeys] = useState<string[]>([]);
   const skipStatusFlipRef = useRef(false);
+  const handledUrlTemplateRef = useRef<string | null>(null);
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const ai = useAiBackendStatus();
@@ -118,21 +139,43 @@ export const PromptBuilder = () => {
   }, [hydrated, selectedTemplate.id, variables, rawContext, showRawContext]);
 
 
+  const applyTemplateSwitch = (template: PromptTemplate) => {
+    const nextNames = template.variables.map((v) => v.name);
+    setVariables((prev) => preserveOverlappingVariables(prev, nextNames));
+    setSelectedTemplate(template);
+    setCopied(false);
+    setPendingTemplate(null);
+    setPendingDiscardKeys([]);
+  };
+
+  const requestTemplateSwitch = (template: PromptTemplate) => {
+    if (template.id === selectedTemplate.id) return;
+    const nextNames = template.variables.map((v) => v.name);
+    const discard = filledUniqueKeys(variables, nextNames);
+    if (discard.length > 0) {
+      setPendingTemplate(template);
+      setPendingDiscardKeys(discard);
+      return;
+    }
+    applyTemplateSwitch(template);
+  };
+
+  const handleSelectTemplate = (template: PromptTemplate) => {
+    requestTemplateSwitch(template);
+  };
+
   useEffect(() => {
+    if (!hydrated) return;
     const requestedId = searchParams.get("template");
     if (!requestedId) return;
     const requestedTemplate = allTemplates.find((template) => template.id === requestedId);
-    if (requestedTemplate && requestedTemplate.id !== selectedTemplate.id) {
-      setSelectedTemplate(requestedTemplate);
-      setVariables({});
-    }
-  }, [allTemplates, searchParams, selectedTemplate.id]);
-
-  const handleSelectTemplate = (template: PromptTemplate) => {
-    setSelectedTemplate(template);
-    setVariables({});
-    setCopied(false);
-  };
+    if (!requestedTemplate || requestedTemplate.id === selectedTemplate.id) return;
+    if (handledUrlTemplateRef.current === requestedId) return;
+    handledUrlTemplateRef.current = requestedId;
+    requestTemplateSwitch(requestedTemplate);
+    // Intentionally after draft hydrate so unique filled vars can warn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, allTemplates, searchParams, selectedTemplate.id]);
 
   const getRenderedPrompt = () => renderPromptTemplate(selectedTemplate, variables);
   const hasUnresolvedPlaceholders = selectedTemplate.variables.some(
@@ -280,6 +323,34 @@ export const PromptBuilder = () => {
     });
   };
 
+  const handleApplyToActiveCard = (field: "system_prompt" | "post_history_instructions") => {
+    const rendered = getRenderedPrompt();
+    if (!rendered.trim()) {
+      toast({ title: "Empty prompt", description: "Fill the template before applying to the card.", variant: "destructive" });
+      return;
+    }
+    const library = loadCardLibrary();
+    const active = getActiveSlot(library);
+    const next = updateActiveSlot(library, {
+      card: { ...active.card, [field]: rendered },
+    });
+    saveCardLibrary(next);
+    stashWorkbenchBridge({
+      target: "character",
+      serviceName: selectedTemplate.name,
+      summary: field === "system_prompt"
+        ? "[From Prompt Builder] Applied rendered prompt to system_prompt."
+        : "[From Prompt Builder] Applied rendered prompt to post_history_instructions.",
+      applyField: field,
+      applyText: rendered,
+    });
+    toast({
+      title: field === "system_prompt" ? "Applied to system prompt" : "Applied to post-history",
+      description: `Saved onto active card “${active.label}”. Open Character Card Builder to review.`,
+    });
+  };
+
+
   return (
     <div className="max-w-3xl space-y-6">
       <div>
@@ -417,13 +488,66 @@ export const PromptBuilder = () => {
             <h3 className="font-display font-semibold text-foreground">Generated Prompt</h3>
             {hasUnresolvedPlaceholders && <p className="neon-callout text-xs" role="note">Fill the fields without examples before copying — or use Fill example values.</p>}
           </div>
-          <Button size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? "Copied" : "Copy filled output"}
-          </Button>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <Button size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? "Copied" : "Copy filled output"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleApplyToActiveCard("system_prompt")}
+              disabled={hasUnresolvedPlaceholders}
+              data-testid="apply-prompt-system"
+            >
+              <FileDown className="h-4 w-4" /> Apply to active card system prompt
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleApplyToActiveCard("post_history_instructions")}
+              disabled={hasUnresolvedPlaceholders}
+              data-testid="apply-prompt-post-history"
+            >
+              <FileDown className="h-4 w-4" /> Apply to post-history
+            </Button>
+          </div>
         </div>
+        <p className="mb-2 neon-callout text-xs" role="note">
+          Apply writes the rendered prompt onto the Workbench active card (local only). Switch to Character Card Builder to review — this does not call a chat host.
+        </p>
         <pre tabIndex={0} aria-label="Generated prompt output" className="max-h-[400px] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/50 p-4 font-mono text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{getRenderedPrompt()}</pre>
       </div>
+
+      <AlertDialog open={pendingTemplate !== null} onOpenChange={(open) => { if (!open) { setPendingTemplate(null); setPendingDiscardKeys([]); } }}>
+        <AlertDialogContent data-testid="template-switch-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch template and discard unique fields?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  Shared variable keys will be kept. These filled fields exist only on the current template and are not on “{pendingTemplate?.name}”:
+                </p>
+                <ul className="list-disc pl-5">
+                  {pendingDiscardKeys.map((key) => (
+                    <li key={key}><code className="text-foreground">{key}</code></li>
+                  ))}
+                </ul>
+                <p>Confirm to switch (unique values are discarded). Cancel keeps your current template and values.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (pendingTemplate) applyTemplateSwitch(pendingTemplate); }}
+              data-testid="template-switch-confirm-action"
+            >
+              Switch and discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

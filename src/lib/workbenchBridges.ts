@@ -7,12 +7,17 @@ export const WORKBENCH_BRIDGE_KEY = "ai-companion-hub-workbench-bridge";
 
 export type WorkbenchBridgeTarget = "character" | "prompts";
 
+export type WorkbenchApplyField = "system_prompt" | "post_history_instructions";
+
 export interface WorkbenchBridgePayload {
   target: WorkbenchBridgeTarget;
   serviceName: string;
   /** Short note only — never dump an entire guide into a card field. */
   summary: string;
   createdAt: number;
+  /** Optional Prompt Builder → Card field apply. */
+  applyField?: WorkbenchApplyField;
+  applyText?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -45,6 +50,8 @@ export function stashWorkbenchBridge(
     serviceName: payload.serviceName.trim() || "Service",
     summary: payload.summary.trim(),
     createdAt: Date.now(),
+    applyField: payload.applyField,
+    applyText: typeof payload.applyText === "string" ? payload.applyText : undefined,
   };
   try {
     sessionStorage.setItem(WORKBENCH_BRIDGE_KEY, JSON.stringify(full));
@@ -62,11 +69,17 @@ export function peekWorkbenchBridge(): WorkbenchBridgePayload | null {
     if (!isRecord(parsed)) return null;
     if (parsed.target !== "character" && parsed.target !== "prompts") return null;
     if (typeof parsed.serviceName !== "string" || typeof parsed.summary !== "string") return null;
+    const applyField =
+      parsed.applyField === "system_prompt" || parsed.applyField === "post_history_instructions"
+        ? parsed.applyField
+        : undefined;
     return {
       target: parsed.target,
       serviceName: parsed.serviceName,
       summary: parsed.summary,
       createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+      applyField,
+      applyText: typeof parsed.applyText === "string" ? parsed.applyText : undefined,
     };
   } catch {
     return null;
@@ -91,4 +104,13 @@ export function appendBridgeToNotes(existing: string, summary: string): string {
   if (!base) return note;
   if (base.includes(note)) return existing;
   return base + "\n\n" + note;
+}
+
+/** Soft Compare → Workbench handoff (UI note only — no invented token ceilings). */
+export function toolsPlatformPath(platformSlugs: string[], tab: WorkbenchBridgeTarget | "lorebook" | "consolidator" | "character" = "character"): string {
+  const params = new URLSearchParams();
+  params.set("tab", tab);
+  const cleaned = platformSlugs.map((s) => s.trim()).filter(Boolean).slice(0, 5);
+  if (cleaned.length) params.set("platform", cleaned.join(","));
+  return "/tools?" + params.toString();
 }

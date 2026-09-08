@@ -124,3 +124,39 @@ export function __portraitMemorySizeForTests(): number {
 export function __clearPortraitMemoryForTests(): void {
   memory.clear();
 }
+
+/**
+ * Accept PNG/JPEG/WebP (and other browser-decodable images). Keep PNG as-is;
+ * convert other formats to a PNG File via canvas before portraitStorage.
+ */
+export async function convertImageFileToPng(file: File): Promise<File> {
+  const type = (file.type || "").toLowerCase();
+  const nameLower = file.name.toLowerCase();
+  if (type === "image/png" || nameLower.endsWith(".png")) {
+    return file.type === "image/png"
+      ? file
+      : new File([file], file.name.endsWith(".png") ? file.name : `${file.name || "portrait"}.png`, {
+          type: "image/png",
+          lastModified: file.lastModified || Date.now(),
+        });
+  }
+  if (typeof createImageBitmap !== "function") {
+    throw new Error("This browser cannot convert images to PNG.");
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unavailable for PNG conversion.");
+    ctx.drawImage(bitmap, 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("PNG conversion failed."))), "image/png");
+    });
+    const base = (file.name || "portrait").replace(/\.[^.]+$/, "") || "portrait";
+    return new File([blob], `${base}.png`, { type: "image/png", lastModified: Date.now() });
+  } finally {
+    bitmap.close();
+  }
+}

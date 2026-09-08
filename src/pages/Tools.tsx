@@ -7,6 +7,8 @@ import { CharacterCardBuilder } from "@/components/tools/CharacterCardBuilder";
 import { PromptBuilder } from "@/components/tools/PromptBuilder";
 import LorebookBuilder from "@/components/tools/LorebookBuilder";
 import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
+import { chatbots } from "@/data/chatbots";
+import { buildWorkbenchSuggestions } from "@/lib/compareWorkbenchSuggestions";
 
 const TAB_VALUES = new Set(["character", "lorebook", "prompts", "consolidator"]);
 
@@ -14,11 +16,20 @@ const Tools = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("tab") ?? "";
   const activeTab = TAB_VALUES.has(requested) ? requested : "character";
+  const platformSlugs = (searchParams.get("platform") || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+  const platformBots = platformSlugs
+    .map((slug) => chatbots.find((b) => b.slug === slug))
+    .filter((b): b is NonNullable<typeof b> => Boolean(b));
 
   const setTab = (value: string) => {
     const next = new URLSearchParams(searchParams);
     if (TAB_VALUES.has(value)) next.set("tab", value);
     else next.delete("tab");
+    // keep platform suggestions across tab changes
     setSearchParams(next, { replace: true });
   };
 
@@ -70,6 +81,32 @@ const Tools = () => {
           <p className="mb-6 text-xs text-muted-foreground">
             Character Card Builder is the default tool. Lorebook Builder is a first-class tab. Secondary: Doc Consolidator builds a Hub guide from pasted notes (AI optional).
           </p>
+
+          {platformBots.length > 0 && (
+            <div className="mb-6 rounded-lg border border-border bg-secondary/30 p-4 space-y-2" data-testid="compare-platform-suggestions">
+              <p className="text-sm font-medium text-foreground">Compare suggestions (not enforced)</p>
+              <p className="text-xs text-muted-foreground">
+                Soft notes from Compare for {platformBots.map((b) => b.name).join(", ")}. Verified vs unverified stamps reflect Hub catalog evidence — they are suggestions only. Card Builder does not apply token ceilings or hard limits from these values.
+              </p>
+              <ul className="space-y-2">
+                {platformBots.map((bot) => (
+                  <li key={bot.slug} className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{bot.name}</span>
+                    <ul className="mt-1 space-y-0.5 pl-3">
+                      {buildWorkbenchSuggestions(bot).map((s) => (
+                        <li key={`${bot.slug}-${s.label}`}>
+                          <span className={s.trust === "verified" ? "text-emerald-400" : "text-amber-400"}>
+                            [{s.trust}]
+                          </span>{" "}
+                          {s.label}: {s.value}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <TabsContent value="character">
             <CharacterCardBuilder />

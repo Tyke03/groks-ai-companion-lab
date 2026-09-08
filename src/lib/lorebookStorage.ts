@@ -232,3 +232,54 @@ export function toggleBoundCard(book: StoredLorebook, cardId: string): StoredLor
     : [...book.boundCardIds, cardId];
   return { ...book, boundCardIds, updatedAt: Date.now() };
 }
+
+/**
+ * Convert a local lorebook into a V2/V3 `character_book` payload for card export.
+ * Shape matches common SillyTavern / Agnai card embeds (entries array, not WI map).
+ */
+export function toCharacterBook(book: StoredLorebook): Record<string, unknown> {
+  const entries = book.entries
+    .filter(entryHasContent)
+    .map((entry, index) => {
+      const secondary = entry.secondaryKeys
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean);
+      const position =
+        entry.position === "after_char"
+          ? "after_char"
+          : entry.position === "top_of_context"
+            ? "before_char"
+            : "before_char";
+      return {
+        id: index,
+        keys: [...entry.keys],
+        secondary_keys: secondary,
+        content: entry.content,
+        enabled: true,
+        insertion_order: entry.insertionOrder,
+        case_sensitive: false,
+        name: "",
+        priority: 10,
+        comment: "",
+        selective: secondary.length > 0,
+        constant: entry.constant,
+        position,
+        extensions: {},
+      };
+    });
+  return {
+    name: book.name.trim() || DEFAULT_LOREBOOK_NAME,
+    description: "",
+    scan_depth: 100,
+    token_budget: 512,
+    recursive_scanning: false,
+    extensions: {},
+    entries,
+  };
+}
+
+/** True when the lorebook is bound to the given card id. */
+export function isLorebookBoundToCard(book: StoredLorebook, cardId: string): boolean {
+  return Boolean(cardId) && book.boundCardIds.includes(cardId);
+}

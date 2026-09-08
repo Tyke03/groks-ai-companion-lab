@@ -48,8 +48,8 @@ import { estimateCardTokens } from "@/lib/cardTokens";
 import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { formatLlmCascadeError } from "@/lib/llmErrors";
-import { deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
-import { loadLorebook } from "@/lib/lorebookStorage";
+import { convertImageFileToPng, deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
+import { isLorebookBoundToCard, loadLorebook, lorebookHasContent, toCharacterBook } from "@/lib/lorebookStorage";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import {
   AlertDialog,
@@ -122,6 +122,7 @@ const fieldDescriptions: Record<string, string> = {
 
 const recommendedMax: Record<string, number> = {
   description: 2000, personality: 1000, scenario: 1000, first_mes: 2000, mes_example: 5000,
+  system_prompt: 2000, creator_notes: 1500, tags: 200, post_history_instructions: 800,
 };
 
 function CharCountIndicator({ current, max }: { current: number; max: number }) {
@@ -134,6 +135,81 @@ function CharCountIndicator({ current, max }: { current: number; max: number }) 
   );
 }
 
+
+function splitTagList(value: string): string[] {
+  return value.split(",").map((t) => t.trim()).filter(Boolean);
+}
+
+function TagChipEditor({
+  value,
+  onChange,
+  placeholder,
+  id,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  id: string;
+}) {
+  const tags = splitTagList(value);
+  const [draft, setDraft] = useState("");
+  const commit = (raw: string) => {
+    const parts = splitTagList(raw);
+    if (!parts.length) return;
+    const merged = [...tags];
+    for (const part of parts) {
+      if (!merged.some((t) => t.toLowerCase() === part.toLowerCase())) merged.push(part);
+    }
+    onChange(merged.join(", "));
+    setDraft("");
+  };
+  const remove = (tag: string) => {
+    onChange(tags.filter((t) => t !== tag).join(", "));
+  };
+  return (
+    <div className="space-y-2" data-testid="tag-chip-editor">
+      <div className="flex flex-wrap gap-1.5 min-h-[1.75rem]">
+        {tags.length === 0 && (
+          <span className="text-xs text-muted-foreground">No tags yet — type and press Enter.</span>
+        )}
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-0.5 text-xs text-foreground"
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => remove(tag)}
+              className="rounded-full p-0.5 hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Remove tag ${tag}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <Input
+        id={id}
+        value={draft}
+        placeholder={placeholder}
+        className="bg-secondary border-border"
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === "Backspace" && !draft && tags.length) {
+            remove(tags[tags.length - 1]);
+          }
+        }}
+        onBlur={() => { if (draft.trim()) commit(draft); }}
+        aria-label="Add tag"
+      />
+      <p className="text-[11px] text-muted-foreground">Chips for editing; export still uses comma-separated tags.</p>
+    </div>
+  );
+}
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
   icon: "Icon / Portrait",
@@ -213,8 +289,21 @@ export const CharacterCardBuilder = () => {
   const [showImport, setShowImport] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [pngFile, setPngFile] = useState<File | null>(null);
+  const [includeBoundLorebook, setIncludeBoundLorebook] = useState(true);
   const pngInputRef = useRef<HTMLInputElement>(null);
+  const assetFileRefs = useRef<(HTMLInputElement | null)[]>([]);
   const activeCardId = library.activeId;
+
+  const boundLorebook = useMemo(() => {
+    const lore = loadLorebook();
+    if (!isLorebookBoundToCard(lore, activeCardId)) return null;
+    if (!lorebookHasContent(lore)) return null;
+    return lore;
+  }, [activeCardId, library.cards.length]);
+
+  useEffect(() => {
+    if (boundLorebook) setIncludeBoundLorebook(true);
+  }, [boundLorebook?.updatedAt, activeCardId]);
 
   // Restore per-slot portrait (session + IndexedDB). Keep current PNG by default.
   useEffect(() => {
@@ -237,10 +326,22 @@ export const CharacterCardBuilder = () => {
   const ai = useAiBackendStatus();
   const aiUnavailable = ai.status === "unavailable";
 
-  // Light Doc Consolidator handoff — append short note once, then clear stash.
+  // Light Doc Consolidator / Prompt Builder handoff — apply once, then clear stash.
   useEffect(() => {
     const payload = consumeWorkbenchBridge("character");
     if (!payload) return;
+    if (payload.applyField && typeof payload.applyText === "string") {
+      const field = payload.applyField;
+      const textValue = payload.applyText;
+      setCard((prev) => ({ ...prev, [field]: textValue }));
+      toast({
+        title: "Prompt applied to card",
+        description: field === "system_prompt"
+          ? `Replaced system prompt from Prompt Builder (${payload.serviceName}).`
+          : `Replaced post-history instructions from Prompt Builder (${payload.serviceName}).`,
+      });
+      return;
+    }
     setCard((prev) => {
       const nextNotes = appendBridgeToNotes(prev.creator_notes, payload.summary);
       if (nextNotes === prev.creator_notes) return prev;
@@ -298,11 +399,20 @@ export const CharacterCardBuilder = () => {
     setCard((prev) => ({ ...prev, [field]: items }));
   };
 
+  /** Preserved bag for export — optionally embed bound lorebook as character_book. */
+  const exportPreserved = useMemo((): PreservedData => {
+    if (!includeBoundLorebook || !boundLorebook) return preserved;
+    return {
+      ...preserved,
+      character_book: toCharacterBook(boundLorebook),
+    };
+  }, [preserved, includeBoundLorebook, boundLorebook]);
+
   /** Current export envelope for the selected spec version, built by the codec. */
   const currentExport = useMemo(() => {
-    if (specVersion === "v3") return buildV3Envelope(card, preserved);
-    return buildV2Envelope(card, preserved);
-  }, [specVersion, card, preserved]);
+    if (specVersion === "v3") return buildV3Envelope(card, exportPreserved);
+    return buildV2Envelope(card, exportPreserved);
+  }, [specVersion, card, exportPreserved]);
 
   /** Import-time + export-time notices that must be visible to the user. */
   const preservationNotices = useMemo(() => {
@@ -343,7 +453,7 @@ export const CharacterCardBuilder = () => {
   };
 
   /** Local approximate token estimate for the active card (pure, deterministic). */
-  const tokenEstimate = useMemo(() => estimateCardTokens(card, preserved), [card, preserved]);
+  const tokenEstimate = useMemo(() => estimateCardTokens(card, exportPreserved), [card, exportPreserved]);
   const renderGreeting = (): ReactNode => card.first_mes.split(/(\*[^*]+\*|"[^"]+")/g).filter(Boolean).map((part, index) => part.startsWith("*") && part.endsWith("*") ? <em key={index} className="text-muted-foreground">{part}</em> : part.startsWith('"') && part.endsWith('"') ? <strong key={index} className="text-foreground">{part}</strong> : <span key={index}>{part}</span>);
 
   const lossyWarningText = useMemo(() => lossyV2Warning(card, preserved), [card, preserved]);
@@ -682,6 +792,44 @@ export const CharacterCardBuilder = () => {
 
   const updateAssets = (next: CardAsset[]) => setPreserved((prev) => ({ ...prev, assets: next }));
 
+  const handlePortraitPick = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const png = await convertImageFileToPng(file);
+      if (png.size > MAX_PNG_BYTES) {
+        toast({ title: "File too large", description: `PNG embedding limit is ${MAX_PNG_LABEL}.`, variant: "destructive" });
+        return;
+      }
+      setPngFile(png);
+      if (png !== file) {
+        toast({ title: "Converted to PNG", description: `Saved “${png.name}” for embedding (from ${file.type || "image"}).` });
+      }
+    } catch (err) {
+      toast({ title: "Could not use image", description: errMsg(err) || "Convert to PNG failed.", variant: "destructive" });
+    }
+  };
+
+  const handleAssetFilePick = (index: number, file: File | undefined) => {
+    if (!file) return;
+    const rawName = file.name || "asset";
+    const dot = rawName.lastIndexOf(".");
+    const base = (dot > 0 ? rawName.slice(0, dot) : rawName).trim() || "asset";
+    const ext = (dot > 0 ? rawName.slice(dot + 1) : "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
+    const uri = `assets/${base}.${ext}`;
+    updateAssets(
+      preserved.assets.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              name: item.name.trim() ? item.name : base,
+              ext,
+              uri: item.uri.trim() ? item.uri : uri,
+            }
+          : item,
+      ),
+    );
+  };
+
   return (
     <div className="max-w-3xl space-y-6">
       <div>
@@ -908,7 +1056,14 @@ export const CharacterCardBuilder = () => {
                 )}
               </div>
             </div>
-            {field.multiline ? (
+            {field.key === "tags" ? (
+              <TagChipEditor
+                id={`card-field-${field.key}`}
+                value={card.tags}
+                onChange={(next) => updateField("tags", next)}
+                placeholder={field.placeholder}
+              />
+            ) : field.multiline ? (
               <Textarea id={`card-field-${field.key}`} placeholder={field.placeholder} value={String(card[field.key])} onChange={(e) => updateField(field.key, e.target.value)} className="min-h-[100px] bg-secondary border-border text-sm" />
             ) : (
               <Input id={`card-field-${field.key}`} placeholder={field.placeholder} value={String(card[field.key])} onChange={(e) => updateField(field.key, e.target.value)} className="bg-secondary border-border" />
@@ -963,21 +1118,46 @@ export const CharacterCardBuilder = () => {
             <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
               <div><p className="text-sm font-medium text-foreground">Assets (V3 draft)</p><p className="text-xs text-muted-foreground">Declare optional files without uploading them. Each asset needs a spec type, name, URI, and lowercase file extension (e.g. png).</p></div>
               {preserved.assets.map((asset, index) => (
-                <div key={index} className="grid gap-2 sm:grid-cols-[150px_1fr_1fr_90px_auto]">
-                  <select
-                    value={asset.type}
-                    onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, type: event.target.value } : item))}
-                    className="h-10 rounded-md border border-border bg-secondary px-2 text-sm"
-                    aria-label={`Asset ${index + 1} type`}
-                  >
-                    {CANONICAL_ASSET_TYPES.map((type) => (
-                      <option key={type} value={type}>{ASSET_TYPE_LABELS[type]}</option>
-                    ))}
-                  </select>
-                  <Input value={asset.name} onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} placeholder="Asset name" className="bg-secondary" aria-label={`Asset ${index + 1} name`} />
-                  <Input value={asset.uri} onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, uri: event.target.value } : item))} placeholder="assets/expressions/happy.png" className="bg-secondary" aria-label={`Asset ${index + 1} URI`} />
-                  <Input value={asset.ext} onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, ext: event.target.value.toLowerCase().replace(/[^a-z0-9]/g, "") } : item))} placeholder="png" className="bg-secondary" aria-label={`Asset ${index + 1} extension`} />
-                  <Button variant="ghost" size="sm" onClick={() => updateAssets(preserved.assets.filter((_, i) => i !== index))} className="text-destructive" aria-label={`Remove asset ${index + 1}`}><Trash2 className="h-4 w-4" /></Button>
+                <div key={index} className="space-y-2 rounded-md border border-border/50 p-2">
+                  <div className="grid gap-2 sm:grid-cols-[150px_1fr_1fr_90px_auto]">
+                    <select
+                      value={asset.type}
+                      onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, type: event.target.value } : item))}
+                      className="h-10 rounded-md border border-border bg-secondary px-2 text-sm"
+                      aria-label={`Asset ${index + 1} type`}
+                    >
+                      {CANONICAL_ASSET_TYPES.map((type) => (
+                        <option key={type} value={type}>{ASSET_TYPE_LABELS[type]}</option>
+                      ))}
+                    </select>
+                    <Input value={asset.name} onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} placeholder="Asset name" className="bg-secondary" aria-label={`Asset ${index + 1} name`} />
+                    <Input value={asset.uri} onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, uri: event.target.value } : item))} placeholder="assets/expressions/happy.png" className="bg-secondary" aria-label={`Asset ${index + 1} URI`} />
+                    <Input value={asset.ext} onChange={(event) => updateAssets(preserved.assets.map((item, i) => i === index ? { ...item, ext: event.target.value.toLowerCase().replace(/[^a-z0-9]/g, "") } : item))} placeholder="png" className="bg-secondary" aria-label={`Asset ${index + 1} extension`} />
+                    <Button variant="ghost" size="sm" onClick={() => updateAssets(preserved.assets.filter((_, i) => i !== index))} className="text-destructive" aria-label={`Remove asset ${index + 1}`}><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={(el) => { assetFileRefs.current[index] = el; }}
+                      type="file"
+                      accept="image/*,.png,.jpg,.jpeg,.webp,.gif"
+                      className="sr-only"
+                      aria-label={`Pick file for asset ${index + 1}`}
+                      onChange={(e) => {
+                        handleAssetFilePick(index, e.target.files?.[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => assetFileRefs.current[index]?.click()}
+                      data-testid={`asset-pick-file-${index}`}
+                    >
+                      <Upload className="h-4 w-4" /> Pick file
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">Auto-fills name / ext / uri from the filename (declaration only — file is not uploaded).</span>
+                  </div>
                 </div>
               ))}
               <Button variant="outline" size="sm" onClick={() => updateAssets([...preserved.assets, { type: "icon", name: "", uri: "", ext: "png" }])}><Plus className="h-4 w-4" /> Add asset declaration</Button>
@@ -1028,17 +1208,17 @@ export const CharacterCardBuilder = () => {
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3" data-testid="png-portrait-panel">
         <p className="text-sm font-medium text-foreground">PNG Image for Card Embedding</p>
         <p className="neon-callout text-xs" role="note" data-testid="png-keep-hint">
-          Current portrait is kept for this card by default (exports and AI gens do not wipe it). Uploading a new PNG is an optional override.
+          Current portrait is kept for this card by default (exports and AI gens do not wipe it). Uploading a new image is an optional override; non-PNG files are converted to PNG locally.
         </p>
         <p className="neon-callout text-xs" role="note">
-          Portrait PNG (max {MAX_PNG_LABEL}) embeds into SillyTavern / RisuAI-style card PNGs. Per-card portraits survive card switches in this browser.
+          Portrait image (max {MAX_PNG_LABEL} as PNG) embeds into SillyTavern / RisuAI-style card PNGs. Per-card portraits survive card switches in this browser.
         </p>
-        <input ref={pngInputRef} id="character-card-png" type="file" accept="image/png" className="sr-only" aria-label="Character portrait PNG" aria-describedby="character-card-png-help" onChange={(e) => { const f = e.target.files?.[0]; if (f) setPngFile(f); e.target.value = ""; }} />
-        <p id="character-card-png-help" className="sr-only">PNG images only, maximum size {MAX_PNG_LABEL}. The image stays in your browser and is used for local card embedding. Re-upload only to replace the current portrait.</p>
+        <input ref={pngInputRef} id="character-card-png" type="file" accept="image/png,image/jpeg,image/webp,image/*" className="sr-only" aria-label="Character portrait image" aria-describedby="character-card-png-help" onChange={(e) => { const f = e.target.files?.[0]; void handlePortraitPick(f); e.target.value = ""; }} />
+        <p id="character-card-png-help" className="sr-only">PNG, JPEG, or WebP images, maximum size {MAX_PNG_LABEL} after PNG conversion. Non-PNG images are converted to PNG in your browser before embedding. Re-upload only to replace the current portrait.</p>
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="outline" size="sm" onClick={() => pngInputRef.current?.click()} aria-describedby="character-card-png-help" data-testid="png-choose-button">
             <Image className="h-4 w-4" />
-            {pngFile ? "Replace PNG (optional)" : "Choose PNG"}
+            {pngFile ? "Replace image (optional)" : "Choose image"}
           </Button>
           {pngFile && (
             <>
@@ -1063,6 +1243,30 @@ export const CharacterCardBuilder = () => {
       </div>
 
       {/* Export actions */}
+      {boundLorebook && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2" data-testid="embed-lorebook-panel">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">Include bound lorebook in export</p>
+              <p className="text-xs text-muted-foreground">
+                Embeds “{boundLorebook.name}” as <code className="text-primary">character_book</code> in JSON/PNG export (V2 and V3). Default on when a lorebook is bound to this card.
+              </p>
+            </div>
+            <Switch
+              checked={includeBoundLorebook}
+              onCheckedChange={setIncludeBoundLorebook}
+              aria-label="Include bound lorebook as character_book in export"
+              data-testid="embed-lorebook-toggle"
+            />
+          </div>
+          {includeBoundLorebook && preserved.character_book !== undefined && (
+            <p className="neon-callout text-xs" role="note">
+              Bound lorebook will replace the imported character_book on this export only (editor preservation unchanged).
+            </p>
+          )}
+        </div>
+      )}
+
       <p className="neon-callout text-xs" role="note" data-testid="export-platform-hint">
         This workbench exports Character Card V2/V3 JSON and optional PNG embedding for frontends that import those files.
         Hosted platforms often use their own upload UI and may not accept these formats — check that platform's docs.
@@ -1107,7 +1311,7 @@ export const CharacterCardBuilder = () => {
       </div>
 
       {/* Approximate token estimate */}
-      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2" data-testid="card-token-panel">
         <div className="flex items-baseline justify-between gap-3">
           <div>
             <p className="text-sm font-medium text-foreground" id="card-token-estimate-label">Approx. tokens</p>
@@ -1117,18 +1321,34 @@ export const CharacterCardBuilder = () => {
             {tokenEstimate.total.toLocaleString()}
           </output>
         </div>
+        <div className="grid gap-2 sm:grid-cols-2" data-testid="card-token-groups">
+          {tokenEstimate.groups.map((group) => (
+            <div key={group.id} className="rounded-md border border-border/60 bg-background/40 px-3 py-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-xs font-medium text-foreground">{group.label}</p>
+                <p className="text-sm font-semibold tabular-nums text-foreground">{group.tokens.toLocaleString()}</p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{group.chars.toLocaleString()} characters</p>
+            </div>
+          ))}
+        </div>
         <details className="text-xs text-muted-foreground">
           <summary>What&apos;s included?</summary>
-          <p className="mt-2">Estimate = total relevant characters ÷ 4, rounded up. Only text that travels with the card is counted.</p>
-          {tokenEstimate.fields.length > 0 ? (
-            <ul className="mt-2 list-disc pl-4 space-y-1">
-              {tokenEstimate.fields.map((f) => (
-                <li key={f.key}>{f.label}: {f.chars.toLocaleString()} characters</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2">No populated text fields yet.</p>
-          )}
+          <p className="mt-2">Estimate = total relevant characters ÷ 4, rounded up. Only text that travels with the card is counted. Permanent vs First/Examples is a local split for drafting — not a platform rule.</p>
+          {tokenEstimate.groups.map((group) => (
+            <div key={`detail-${group.id}`} className="mt-2">
+              <p className="font-medium text-foreground/80">{group.label}</p>
+              {group.fields.length > 0 ? (
+                <ul className="mt-1 list-disc pl-4 space-y-1">
+                  {group.fields.map((f) => (
+                    <li key={f.key}>{f.label}: {f.chars.toLocaleString()} characters</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1">No populated fields in this group.</p>
+              )}
+            </div>
+          ))}
           <p className="mt-2">Excluded: {tokenEstimate.excluded.join("; ")}.</p>
           <p className="mt-2">Opaque data is not guessed at; this is not a tokenizer and not model-exact.</p>
         </details>

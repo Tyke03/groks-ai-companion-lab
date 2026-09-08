@@ -17,10 +17,21 @@ import type { CardData, PreservedData } from "./cardTypes";
 
 export const CHARS_PER_TOKEN = 4;
 
+export type TokenFieldGroup = "permanent" | "first_examples";
+
 export interface TokenEstimateField {
   key: string;
   label: string;
   chars: number;
+  group: TokenFieldGroup;
+}
+
+export interface TokenEstimateGroup {
+  id: TokenFieldGroup;
+  label: string;
+  chars: number;
+  tokens: number;
+  fields: TokenEstimateField[];
 }
 
 export interface TokenEstimate {
@@ -29,6 +40,8 @@ export interface TokenEstimate {
   totalChars: number;
   /** Per-field character contributions for the disclosure detail. */
   fields: TokenEstimateField[];
+  /** Split: Permanent vs First message / Examples. */
+  groups: TokenEstimateGroup[];
   /** Human-readable categories intentionally excluded from the estimate. */
   excluded: string[];
 }
@@ -38,11 +51,30 @@ function addField(
   key: string,
   label: string,
   value: string | string[],
+  group: TokenFieldGroup,
 ): void {
   const chars = Array.isArray(value)
     ? value.reduce((sum, item) => sum + (item?.length ?? 0), 0)
     : (value?.length ?? 0);
-  if (chars > 0) fields.push({ key, label, chars });
+  if (chars > 0) fields.push({ key, label, chars, group });
+}
+
+function buildGroups(fields: TokenEstimateField[]): TokenEstimateGroup[] {
+  const defs: { id: TokenFieldGroup; label: string }[] = [
+    { id: "permanent", label: "Permanent" },
+    { id: "first_examples", label: "First / Examples" },
+  ];
+  return defs.map((def) => {
+    const groupFields = fields.filter((f) => f.group === def.id);
+    const chars = groupFields.reduce((sum, f) => sum + f.chars, 0);
+    return {
+      id: def.id,
+      label: def.label,
+      chars,
+      tokens: Math.ceil(chars / CHARS_PER_TOKEN),
+      fields: groupFields,
+    };
+  });
 }
 
 /**
@@ -70,6 +102,8 @@ export function characterBookChars(book: unknown): number {
       add(e.content);
       add(e.comment);
       if (typeof e.keys === "string") chars += e.keys.length;
+      else if (Array.isArray(e.keys)) chars += e.keys.reduce((s: number, k) => s + String(k).length, 0);
+      if (Array.isArray(e.secondary_keys)) chars += e.secondary_keys.reduce((s: number, k) => s + String(k).length, 0);
     }
   }
   return chars;
@@ -94,22 +128,22 @@ export function estimateCardTokens(
   preserved: PreservedData,
 ): TokenEstimate {
   const fields: TokenEstimateField[] = [];
-  addField(fields, "name", "Name", card.name);
-  addField(fields, "description", "Description", card.description);
-  addField(fields, "personality", "Personality", card.personality);
-  addField(fields, "scenario", "Scenario", card.scenario);
-  addField(fields, "first_mes", "First message", card.first_mes);
-  addField(fields, "mes_example", "Example dialogue", card.mes_example);
+  addField(fields, "name", "Name", card.name, "permanent");
+  addField(fields, "description", "Description", card.description, "permanent");
+  addField(fields, "personality", "Personality", card.personality, "permanent");
+  addField(fields, "scenario", "Scenario", card.scenario, "permanent");
+  addField(fields, "first_mes", "First message", card.first_mes, "first_examples");
+  addField(fields, "mes_example", "Example dialogue", card.mes_example, "first_examples");
   // Only populated when present.
-  addField(fields, "system_prompt", "System prompt", card.system_prompt);
-  addField(fields, "post_history_instructions", "Post-history instructions", card.post_history_instructions);
-  addField(fields, "alternate_greetings", "Alternate greetings", card.alternate_greetings);
+  addField(fields, "system_prompt", "System prompt", card.system_prompt, "permanent");
+  addField(fields, "post_history_instructions", "Post-history instructions", card.post_history_instructions, "permanent");
+  addField(fields, "alternate_greetings", "Alternate greetings", card.alternate_greetings, "first_examples");
   // Creator notes are part of the current exported card data.
-  addField(fields, "creator_notes", "Creator notes", card.creator_notes);
+  addField(fields, "creator_notes", "Creator notes", card.creator_notes, "permanent");
   // Character book only when available locally and included in export behavior.
   if (preserved.character_book !== undefined) {
     const chars = characterBookChars(preserved.character_book);
-    if (chars > 0) fields.push({ key: "character_book", label: "Character book", chars });
+    if (chars > 0) fields.push({ key: "character_book", label: "Character book", chars, group: "permanent" });
   }
 
   const totalChars = fields.reduce((sum, f) => sum + f.chars, 0);
@@ -117,6 +151,7 @@ export function estimateCardTokens(
     total: Math.ceil(totalChars / CHARS_PER_TOKEN),
     totalChars,
     fields,
+    groups: buildGroups(fields),
     excluded: [...EXCLUDED_TOKEN_CATEGORIES],
   };
 }

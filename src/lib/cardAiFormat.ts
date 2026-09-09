@@ -117,21 +117,259 @@ export function countMesExampleStarts(text: string): number {
 }
 
 
-/** Parse a whole-card JSON object from an AI response (fences / prose tolerated). */
+/** Strip thinking and reasoning blocks emitted by thinking/reasoning models. */
+export function stripThinkingBlocks(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '') // unclosed think block at end
+    .trim();
+}
+
+/**
+ * Resiliently repair invalid JSON string produced by LLMs:
+ * - Replaces unescaped literal newlines/tabs inside string literals with \n and \t
+ * - Escapes unescaped double quotes occurring inside string values (dialogue quotes)
+ * - Removes trailing commas before } and ]
+ * - Auto-closes truncated strings, arrays, and objects
+ */
+export function repairJsonString(input: string): string {
+  if (!input || typeof input !== 'string') return '{}';
+  let str = input.trim();
+
+  // Strip trailing commas before } or ]
+  str = str.replace(/,\s*([}\]])/g, '$1');
+
+  const chars = Array.from(str);
+  const result: string[] = [];
+  let inString = false;
+  let isKey = false;
+  let isEscaped = false;
+  const stack: ('{' | '[')[] = [];
+
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+
+    if (inString) {
+      if (isEscaped) {
+        result.push(ch);
+        isEscaped = false;
+        continue;
+      }
+
+      if (ch === '\\') {
+        result.push(ch);
+        isEscaped = true;
+        continue;
+      }
+
+      if (ch === '\n') {
+        result.push('\\n');
+        continue;
+      }
+
+      if (ch === '\r') {
+        continue;
+      }
+
+      if (ch === '\t') {
+        result.push('\\t');
+        continue;
+      }
+
+      if (ch === '"') {
+        // Check if this is the actual closing quote of the key or value
+        let nextNonWs = '';
+        for (let j = i + 1; j < chars.length; j++) {
+          if (!/\s/.test(chars[j])) {
+            nextNonWs = chars[j];
+            break;
+          }
+        }
+
+        if (isKey) {
+          if (nextNonWs === ':') {
+            inString = false;
+            isKey = false;
+            result.push(ch);
+          } else {
+            result.push('\\"');
+          }
+        } else {
+          // If followed by comma, closing brace/bracket, colon, or EOF -> genuine closing quote
+          if (
+            nextNonWs === ',' ||
+            nextNonWs === '}' ||
+            nextNonWs === ']' ||
+            nextNonWs === '' ||
+            nextNonWs === ':'
+          ) {
+            inString = false;
+            result.push(ch);
+          } else {
+            // Dialogue or embedded quote -> escape it
+            result.push('\\"');
+          }
+        }
+        continue;
+      }
+
+      result.push(ch);
+    } else {
+      // Outside string literal
+      if (ch === '"') {
+        inString = true;
+        let prevNonWs = '';
+        for (let j = i - 1; j >= 0; j--) {
+          if (!/\s/.test(chars[j])) {
+            prevNonWs = chars[j];
+            break;
+          }
+        }
+        const topOfStack = stack.length > 0 ? stack[stack.length - 1] : null;
+        isKey = topOfStack === '{' && (prevNonWs === '{' || prevNonWs === ',');
+        result.push(ch);
+      } else if (ch === '{') {
+        stack.push('{');
+        result.push(ch);
+      } else if (ch === '}') {
+        if (stack.length > 0 && stack[stack.length - 1] === '{') {
+          stack.pop();
+        }
+        result.push(ch);
+      } else if (ch === '[') {
+        stack.push('[');
+        result.push(ch);
+      } else if (ch === ']') {
+        if (stack.length > 0 && stack[stack.length - 1] === '[') {
+          stack.pop();
+        }
+        result.push(ch);
+      } else {
+        result.push(ch);
+      }
+    }
+  }
+
+  let repaired = result.join('');
+
+  // Close open string if unclosed
+  if (inString) {
+    repaired += '"';
+  }
+
+  // Remove trailing commas after repairs
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  // Close open brackets/braces
+  while (stack.length > 0) {
+    const top = stack.pop();
+    if (top === '{') repaired += '}';
+    else if (top === '[') repaired += ']';
+  }
+
+  return repaired;
+}
+
+/** Fuzzy fallback extractor for standard CCV2/V3 card fields from malformed payloads. */
+export function extractCardFieldsFuzzy(raw: string): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const text = stripThinkingBlocks(raw);
+  const result: Record<string, unknown> = {};
+
+  for (const field of HUB_CARD_FIELD_ORDER) {
+    // 1. Array fields: "field_name": [...]
+    const arrayMatch = new RegExp(`"${field}"\\s*:\\s*\\[([\\s\\S]*?)\\]`, 'i').exec(text);
+    if (arrayMatch) {
+      const items: string[] = [];
+      const itemRegex = /"((?:\\.|[^"\\])*)"/g;
+      let m: RegExpExecArray | null;
+      while ((m = itemRegex.exec(arrayMatch[1])) !== null) {
+        items.push(m[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\t/g, '\t'));
+      }
+      if (items.length > 0 || ARRAY_CARD_FIELDS.has(field)) {
+        result[field] = items;
+        continue;
+      }
+    }
+
+    // 2. Multiline string field bounded by next known field key or ending brace
+    const multilineMatch = new RegExp(
+      `"${field}"\\s*:\\s*"([\\s\\S]*?)(?="\\s*,\\s*"[a-zA-Z0-9_-]+"\\s*:|"\\s*})`,
+      'i',
+    ).exec(text);
+    if (multilineMatch) {
+      result[field] = multilineMatch[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .trim();
+      continue;
+    }
+
+    // 3. Single-line string field
+    const strMatch = new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i').exec(text);
+    if (strMatch) {
+      result[field] = strMatch[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .trim();
+      continue;
+    }
+  }
+
+  return Object.keys(result).length >= 2 ? result : null;
+}
+
+/** Parse a whole-card JSON object from an AI response with multi-tier repair and fallback. */
 export function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null; parseError: boolean } {
   if (!raw || typeof raw !== 'string') return { card: null, parseError: true };
-  let text = raw.trim();
+
+  // Step 1: Strip thinking blocks
+  let text = stripThinkingBlocks(raw.trim());
+
+  // Step 2: Strip code fences if present
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) text = fence[1].trim();
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { card: null, parseError: true };
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { card: null, parseError: true };
-    return { card: parsed as Record<string, unknown>, parseError: false };
-  } catch {
-    return { card: null, parseError: true };
+
+  // Step 3: Find outermost object bounds
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    text = text.slice(firstBrace, lastBrace + 1);
   }
+
+  // Tier 1: Direct JSON.parse
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { card: parsed as Record<string, unknown>, parseError: false };
+    }
+  } catch {
+    // Fall through to Tier 2
+  }
+
+  // Tier 2: Resilient JSON repair (unescaped newlines/quotes, trailing commas, truncated brackets)
+  try {
+    const repaired = repairJsonString(text);
+    const parsed = JSON.parse(repaired);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { card: parsed as Record<string, unknown>, parseError: false };
+    }
+  } catch {
+    // Fall through to Tier 3
+  }
+
+  // Tier 3: Fuzzy field-by-field regex fallback extractor
+  const fuzzyCard = extractCardFieldsFuzzy(raw);
+  if (fuzzyCard && Object.keys(fuzzyCard).length > 0) {
+    return { card: fuzzyCard, parseError: false };
+  }
+
+  return { card: null, parseError: true };
 }
 
 /** Pull one field from a whole-card object (supports optional nested data). */

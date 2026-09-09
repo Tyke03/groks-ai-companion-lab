@@ -471,20 +471,258 @@ function normalizeWholeCardToHub(card: Record<string, unknown> | null | undefine
   return result;
 }
 
+/** Strip thinking and reasoning blocks emitted by thinking/reasoning models. */
+function stripThinkingBlocks(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '') // unclosed think block at end
+    .trim();
+}
+
+/**
+ * Resiliently repair invalid JSON string produced by LLMs:
+ * - Replaces unescaped literal newlines/tabs inside string literals with \n and \t
+ * - Escapes unescaped double quotes occurring inside string values (dialogue quotes)
+ * - Removes trailing commas before } and ]
+ * - Auto-closes truncated strings, arrays, and objects
+ */
+function repairJsonString(input: string): string {
+  if (!input || typeof input !== 'string') return '{}';
+  let str = input.trim();
+
+  // Strip trailing commas before } or ]
+  str = str.replace(/,\s*([}\]])/g, '$1');
+
+  const chars = Array.from(str);
+  const result: string[] = [];
+  let inString = false;
+  let isKey = false;
+  let isEscaped = false;
+  const stack: ('{' | '[')[] = [];
+
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+
+    if (inString) {
+      if (isEscaped) {
+        result.push(ch);
+        isEscaped = false;
+        continue;
+      }
+
+      if (ch === '\\') {
+        result.push(ch);
+        isEscaped = true;
+        continue;
+      }
+
+      if (ch === '\n') {
+        result.push('\\n');
+        continue;
+      }
+
+      if (ch === '\r') {
+        continue;
+      }
+
+      if (ch === '\t') {
+        result.push('\\t');
+        continue;
+      }
+
+      if (ch === '"') {
+        // Check if this is the actual closing quote of the key or value
+        let nextNonWs = '';
+        for (let j = i + 1; j < chars.length; j++) {
+          if (!/\s/.test(chars[j])) {
+            nextNonWs = chars[j];
+            break;
+          }
+        }
+
+        if (isKey) {
+          if (nextNonWs === ':') {
+            inString = false;
+            isKey = false;
+            result.push(ch);
+          } else {
+            result.push('\\"');
+          }
+        } else {
+          // If followed by comma, closing brace/bracket, colon, or EOF -> genuine closing quote
+          if (
+            nextNonWs === ',' ||
+            nextNonWs === '}' ||
+            nextNonWs === ']' ||
+            nextNonWs === '' ||
+            nextNonWs === ':'
+          ) {
+            inString = false;
+            result.push(ch);
+          } else {
+            // Dialogue or embedded quote -> escape it
+            result.push('\\"');
+          }
+        }
+        continue;
+      }
+
+      result.push(ch);
+    } else {
+      // Outside string literal
+      if (ch === '"') {
+        inString = true;
+        let prevNonWs = '';
+        for (let j = i - 1; j >= 0; j--) {
+          if (!/\s/.test(chars[j])) {
+            prevNonWs = chars[j];
+            break;
+          }
+        }
+        const topOfStack = stack.length > 0 ? stack[stack.length - 1] : null;
+        isKey = topOfStack === '{' && (prevNonWs === '{' || prevNonWs === ',');
+        result.push(ch);
+      } else if (ch === '{') {
+        stack.push('{');
+        result.push(ch);
+      } else if (ch === '}') {
+        if (stack.length > 0 && stack[stack.length - 1] === '{') {
+          stack.pop();
+        }
+        result.push(ch);
+      } else if (ch === '[') {
+        stack.push('[');
+        result.push(ch);
+      } else if (ch === ']') {
+        if (stack.length > 0 && stack[stack.length - 1] === '[') {
+          stack.pop();
+        }
+        result.push(ch);
+      } else {
+        result.push(ch);
+      }
+    }
+  }
+
+  let repaired = result.join('');
+
+  // Close open string if unclosed
+  if (inString) {
+    repaired += '"';
+  }
+
+  // Remove trailing commas after repairs
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  // Close open brackets/braces
+  while (stack.length > 0) {
+    const top = stack.pop();
+    if (top === '{') repaired += '}';
+    else if (top === '[') repaired += ']';
+  }
+
+  return repaired;
+}
+
+/** Fuzzy fallback extractor for standard CCV2/V3 card fields from malformed payloads. */
+function extractCardFieldsFuzzy(raw: string): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const text = stripThinkingBlocks(raw);
+  const result: Record<string, unknown> = {};
+
+  for (const field of CARD_FIELD_ORDER) {
+    // 1. Array fields: "field_name": [...]
+    const arrayMatch = new RegExp(`"${field}"\\s*:\\s*\\[([\\s\\S]*?)\\]`, 'i').exec(text);
+    if (arrayMatch) {
+      const items: string[] = [];
+      const itemRegex = /"((?:\\.|[^"\\])*)"/g;
+      let m: RegExpExecArray | null;
+      while ((m = itemRegex.exec(arrayMatch[1])) !== null) {
+        items.push(m[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\t/g, '\t'));
+      }
+      if (items.length > 0 || ARRAY_CARD_FIELDS.has(field)) {
+        result[field] = items;
+        continue;
+      }
+    }
+
+    // 2. Multiline string field bounded by next known field key or ending brace
+    const multilineMatch = new RegExp(
+      `"${field}"\\s*:\\s*"([\\s\\S]*?)(?="\\s*,\\s*"[a-zA-Z0-9_-]+"\\s*:|"\\s*})`,
+      'i',
+    ).exec(text);
+    if (multilineMatch) {
+      result[field] = multilineMatch[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .trim();
+      continue;
+    }
+
+    // 3. Single-line string field
+    const strMatch = new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i').exec(text);
+    if (strMatch) {
+      result[field] = strMatch[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .trim();
+      continue;
+    }
+  }
+
+  return Object.keys(result).length >= 2 ? result : null;
+}
+
 function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null; parseError: boolean } {
   if (!raw || typeof raw !== 'string') return { card: null, parseError: true };
-  let text = raw.trim();
+
+  // Step 1: Strip thinking blocks
+  let text = stripThinkingBlocks(raw.trim());
+
+  // Step 2: Strip code fences if present
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) text = fence[1].trim();
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { card: null, parseError: true };
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { card: null, parseError: true };
-    return { card: parsed as Record<string, unknown>, parseError: false };
-  } catch {
-    return { card: null, parseError: true };
+
+  // Step 3: Find outermost object bounds
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    text = text.slice(firstBrace, lastBrace + 1);
   }
+
+  // Tier 1: Direct JSON.parse
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { card: parsed as Record<string, unknown>, parseError: false };
+    }
+  } catch {
+    // Fall through to Tier 2
+  }
+
+  // Tier 2: Resilient JSON repair (unescaped newlines/quotes, trailing commas, truncated brackets)
+  try {
+    const repaired = repairJsonString(text);
+    const parsed = JSON.parse(repaired);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { card: parsed as Record<string, unknown>, parseError: false };
+    }
+  } catch {
+    // Fall through to Tier 3
+  }
+
+  // Tier 3: Fuzzy field-by-field regex fallback extractor
+  const fuzzyCard = extractCardFieldsFuzzy(raw);
+  if (fuzzyCard && Object.keys(fuzzyCard).length > 0) {
+    return { card: fuzzyCard, parseError: false };
+  }
+
+  return { card: null, parseError: true };
 }
 
 /** True when raw looks like an unfinished JSON object (common Venice truncation). */
@@ -873,7 +1111,11 @@ async function callVeniceStreaming(
     max_tokens: maxTokens,
     temperature,
     stream: true,
-    venice_parameters: { include_venice_system_prompt: false },
+    venice_parameters: {
+      include_venice_system_prompt: false,
+      strip_thinking_response: true,
+      disable_thinking: true,
+    },
   };
 
   const controller = new AbortController();
@@ -956,11 +1198,15 @@ async function callVeniceStreaming(
         if (data === '[DONE]') {
           settled = true;
           clearInterval(watchdog);
-          return content;
+          return stripThinkingBlocks(content);
         }
         try {
           const parsed = JSON.parse(data);
           const delta = parsed?.choices?.[0]?.delta?.content;
+          const reasoning = parsed?.choices?.[0]?.delta?.reasoning_content;
+          if (typeof reasoning === 'string' && reasoning.length) {
+            lastChunkAt = Date.now();
+          }
           if (typeof delta === 'string' && delta.length) {
             content += delta;
             lastChunkAt = Date.now();
@@ -995,10 +1241,11 @@ async function callVeniceStreaming(
     }
   }
 
-  if (!content) {
+  const cleaned = stripThinkingBlocks(content);
+  if (!cleaned) {
     throw new Error(sawChunk ? 'hung: stream ended with empty content' : 'hung: connection died with no chunks');
   }
-  return content;
+  return cleaned;
 }
 
 async function callProvider(
@@ -1170,8 +1417,8 @@ ${text}`;
     }
 
     // === CHARACTER CARD: GENERATE SINGLE FIELD ===
-    // HYBRID (no notes): enough context => fast targeted single-field (plain text); else whole-card-then-slice.
-    // WITH refinementNotes + draft content: ALWAYS targeted plain-text DELTA refine (never whole-card rebuild).
+    // Single-field generation is ALWAYS targeted plain text (fast ~2s, saves 90% tokens, eliminates JSON parse failures).
+    // WITH refinementNotes + draft content: targeted plain-text DELTA refine.
     if (action === 'generate-field') {
       const { fieldName, existingFields, specVersion, refinementNotes, currentValue } = body;
       if (!fieldName) {
@@ -1187,7 +1434,7 @@ ${text}`;
       const useRefine = notes.length > 0 && draft.length > 0;
 
       if (useRefine) {
-        // Single-field with notes: ALWAYS targeted plain-text path (even if sparse context).
+        // Single-field with notes: ALWAYS targeted plain-text path
         const prompt = buildRefinementFieldPrompt(fieldKey, draft, notes, existingFields, isV3);
         const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
         const singleSystem = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
@@ -1199,6 +1446,7 @@ Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt
         const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
         let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
         if (typeof fieldValue === 'string') {
+          fieldValue = stripThinkingBlocks(fieldValue);
           const fence = fieldValue.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
           if (fence) fieldValue = fence[1].trim();
           fieldValue = sanitizeCardText(fieldValue, fieldKey);
@@ -1206,44 +1454,27 @@ Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt
         return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: false, refined: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const useTargeted = hasEnoughSingleFieldContext(existingFields);
-
-      if (useTargeted) {
-        const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3);
-        const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
-        const singleSystem = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
+      // Targeted single-field generation
+      const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3);
+      const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
+      const singleSystem = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
 
 You are an expert Character Card field author for SillyTavern CCV2/V3.
 Write ONLY the requested field text. No JSON, no markdown fences, no commentary.
 Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt.`;
-        const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
-        let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
-        // Strip accidental fences
-        if (typeof fieldValue === 'string') {
-          const fence = fieldValue.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
-          if (fence) fieldValue = fence[1].trim();
-          fieldValue = sanitizeCardText(fieldValue, fieldKey);
-        }
-        return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: false, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
+      let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
+      if (typeof fieldValue === 'string') {
+        fieldValue = stripThinkingBlocks(fieldValue);
+        const fence = fieldValue.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
+        if (fence) fieldValue = fence[1].trim();
+        fieldValue = sanitizeCardText(fieldValue, fieldKey);
       }
-
-      const prompt = buildWholeCardUserPrompt(existingFields, isV3) +
-        `\n\nSINGLE-FIELD MODE: After building the complete card JSON, the client will keep ONLY "${fieldKey}". Still produce the FULL card JSON (all keys). The current text in "${fieldKey}" is labeled context above and must be digested like every other field.`;
-
-      const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
-
-      const flatCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
-      const fieldValue = extractCardField(flatCard, fieldKey);
-      if (fieldValue === undefined) {
-        return new Response(JSON.stringify({ result, parseError: true, error: `Full card parsed but missing field ${fieldKey}`, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-
-      // Return ONLY the requested field value - client must not apply other fields.
-      return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: fieldValue, fieldName: fieldKey, wholeCardBuilt: false, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === CHARACTER CARD: GENERATE ALL FIELDS ===
-    // Same whole-card rebuild; client applies all fields like import.
+    // Whole-card generation with multi-tier JSON repair & fuzzy fallback.
     // WITH refinementNotes: keep schema + POV/Voice Anchor; append REFINE-ALL MODE (critique + preservation).
     if (action === 'generate-all') {
       const { existingFields, specVersion, refinementNotes } = body;
@@ -1303,20 +1534,18 @@ OUTPUT FORMAT:
 
 Return ONLY the JSON object, no explanation.`;
 
-      const { content: result, provider } = await callLLM(
+      const { content: rawResult, provider } = await callLLM(
         'You are a character card format conversion expert. You can parse any character format and convert to V2/V3 spec. You NEVER discard information. Respond with valid JSON only.',
         prompt, 4096, 0.3
       );
 
-      let parsed: Record<string, string> = {};
-      try {
-        const jsonMatch = result.match(/\{[\s\S]*\}/);
-        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-      } catch {
-        return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const cleaned = stripThinkingBlocks(rawResult);
+      const { card, parseError } = parseWholeCardJson(cleaned);
+      if (parseError || !card) {
+        return new Response(JSON.stringify({ result: rawResult, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      return new Response(JSON.stringify({ result: parsed }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ result: card, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === PROMPT BUILDER: GENERATE VARIABLE ===
@@ -1352,7 +1581,8 @@ Write ONLY the variable value — no labels, no quotes around it, no explanation
         { venice: VENICE_PROMPT_MODEL, openrouter: OPENROUTER_PROMPT_MODEL },
       );
 
-      return new Response(JSON.stringify({ result: result.trim(), provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const cleaned = stripThinkingBlocks(result).trim();
+      return new Response(JSON.stringify({ result: cleaned, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // === PROMPT BUILDER: GENERATE ALL VARIABLES ===
@@ -1405,10 +1635,19 @@ Generate ALL variables listed above. Every variable must have a value. Stay cons
         { venice: VENICE_PROMPT_MODEL, openrouter: OPENROUTER_PROMPT_MODEL },
       );
 
+      const cleaned = stripThinkingBlocks(result);
       let parsed: Record<string, string> = {};
       try {
-        const jsonMatch = result.match(/\{[\s\S]*\}/);
-        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        const fence = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        const jsonText = fence ? fence[1].trim() : cleaned.trim();
+        const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            parsed = JSON.parse(jsonMatch[0]);
+          } catch {
+            parsed = JSON.parse(repairJsonString(jsonMatch[0]));
+          }
+        }
       } catch {
         return new Response(JSON.stringify({ result, parseError: true, provider }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }

@@ -23,6 +23,13 @@ describe("sanitizeCardMacros", () => {
     expect(sanitizeCardMacros("User: hello\nName: hi")).toBe("{{user}}: hello\n{{char}}: hi");
   });
 
+  it("rewrites the user's / the user case-insensitively (possessive first)", () => {
+    expect(sanitizeCardMacros("She is the user's little sister.")).toBe("She is {{user}}'s little sister.");
+    expect(sanitizeCardMacros("THE USER'S coat")).toBe("{{user}}'s coat");
+    expect(sanitizeCardMacros("When the user arrives.")).toBe("When {{user}} arrives.");
+    expect(sanitizeCardMacros("The user smiles.")).toBe("{{user}} smiles.");
+  });
+
   it("rewrites leading You are only for description/personality", () => {
     expect(sanitizeCardMacros("You are a tall mage.", "description")).toBe("{{char}} is a tall mage.");
     expect(sanitizeCardMacros("You are a tall mage.", "personality")).toBe("{{char}} is a tall mage.");

@@ -50,6 +50,23 @@ creator_notes | Correct: 3rd-person notes for OTHER creators on how to use the c
 `;
 
 /** Voice Anchor rules — embed in the SAME whole-card prompt (no separate Phase-1 API). */
+/** Relational phrasing: prefer {{char}}/{{user}} macros over "the user" / "your sister". */
+const RELATIONAL_PHRASING_RULES = `RELATIONAL PHRASING (description / personality / scenario -- and anywhere a relationship is stated):
+
+Correct:
+- {{char}} is {{user}}'s younger sister
+- {{char}} is the younger sister of {{user}}
+- {{char}} and {{user}} are siblings / rivals / partners (as fits the card)
+
+Banned:
+- "the user's sister" / "the user's [relation]"
+- bare "the user" as a noun (use {{user}})
+- "your sister" / "your [relation]" when meaning {{user}}'s relation to {{char}}
+- Wikipedia-bio phrasing: "X, the user's Y, is..."
+
+Prefer stating the bond as {{char}} <-> {{user}} with macros. Do not soft-address the reader as "you" for kinship labels in profile fields.
+`;
+
 const VOICE_ANCHOR_RULES = `VOICE ANCHOR (bake into personality, first_mes, mes_example, system_prompt consistently):
 
 1) Dynamic: define how {{char}} relates to {{user}} vs the world (power, warmth, distance, rivalry). Keep that dynamic coherent across fields.
@@ -72,7 +89,7 @@ Personality/description = {{char}} traits from an authorial/third-person (or {{c
 FIELDS & LENGTH BUDGETS (hard ceilings for finished text - stay under):
 - name: character display name. Keep if provided. Budget ~40 chars.
 - description: appearance, background, abilities, key traits. 2-4 paragraphs. Budget <=2000 chars. Authorial POV about {{char}}.
-- personality: {{char}} traits, behavioral patterns, quirks - NOT the user's traits. Prefer concise trait list or short prose. Budget <=1000 chars.
+- personality: {{char}} traits, behavioral patterns, quirks - NOT {{user}}'s traits. Prefer concise trait list or short prose. Budget <=1000 chars.
 - scenario: setting/situation framing the chat. Budget <=1000 chars. Do not write as {{user}} diary.
 - first_mes: {{char}} opening message. Use *asterisks for actions* and natural dialogue. Budget <=2000 chars.
 - mes_example: EXACTLY three SillyTavern example blocks (Block1 Public/Casual → Block2 Private/Core → Block3 High stakes/Vulnerability — NOT three hellos):
@@ -174,6 +191,9 @@ function sanitizeCardText(text: string, fieldName?: string): string {
   out = out.replace(/\{\{\s*char'?s\s*\}\}/g, "{{char}}'s");
   out = out.replace(/\bThe User\b/g, '{{user}}');
   out = out.replace(/\bthe User\b/g, '{{user}}');
+  // Case-insensitive: possessives BEFORE bare "the user"
+  out = out.replace(/\bthe user's\b/gi, "{{user}}'s");
+  out = out.replace(/\bthe user\b/gi, '{{user}}');
   out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');
   out = out.replace(/(^|\n)\s*Name\s*:/g, '$1{{char}}:');
   if (fieldName === 'description' || fieldName === 'personality') {
@@ -272,6 +292,8 @@ ${FIELD_POV_CONTRACT}
 
 ${VOICE_ANCHOR_RULES}
 
+${RELATIONAL_PHRASING_RULES}
+
 ${fieldName === 'mes_example' ? MES_EXAMPLE_FORMAT_RULES + '\n\n' : ''}TARGET FIELD: ${fieldName}
 FIELD BIBLE: ${bibleLine}
 ${pov}
@@ -308,46 +330,60 @@ ${FIELD_POV_CONTRACT}
 
 ${VOICE_ANCHOR_RULES}
 
+${RELATIONAL_PHRASING_RULES}
+
+${CHARACTER_CARD_STUDIO_SKILL_RULES}
+
 ${fieldName === 'mes_example' ? MES_EXAMPLE_FORMAT_RULES + '\n\n' : ''}TARGET FIELD: ${fieldName}
 FIELD BIBLE: ${bibleLine}
 ${pov}
 
-${contextBlock}
+CREATOR CRITIQUE / NOTES (MANDATORY DIRECTIVE PRIORITY):
+${notes}
 
-REFINE / DELTA MODE (do NOT start from scratch):
-You are revising an existing draft of "${fieldName}". Preserve identity, voice, established facts, and structure unless the creator notes explicitly change them. Address the critique; do not rewrite into an unrelated field.
+MANDATORY DIRECTIVE PRIORITY:
+- The critique ABOVE overrides any conflicting part of the CURRENT DRAFT below.
+- You MUST actively modify the draft to satisfy the critique. Do NOT copy the draft unchanged when notes conflict.
+- Preservation applies ONLY to parts that do NOT conflict with the notes (keep identity/voice/format when still valid).
+- Address every actionable point in the critique.
 
 CURRENT DRAFT of "${fieldName}":
 ${currentValue}
 
-CREATOR CRITIQUE / NOTES:
-${notes}
+${contextBlock}
 
-PRESERVATION RULES:
+OUTPUT RULES:
 - Keep the same field type/format (e.g. mes_example still exactly three <START> blocks with {{user}}:/{{char}}:; first_mes stays a single opener).
-- Stay consistent with Voice Anchor + POV + macro rules.
-- MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}; no The User; no User:/Name: labels.
+- Stay consistent with Voice Anchor + POV + relational phrasing + macro rules.
+- MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}; no The User / the user; no User:/Name: labels.
 ${isV3 ? '- V3 card context.' : '- V2-flat card context.'}
 
 Respond with ONLY the revised field text, no JSON, no fences, no commentary.`;
 }
 
+
 function buildRefineAllAppendix(notes: string): string {
   return `
 
-REFINE-ALL MODE (DELTA / PRESERVATION — do NOT invent a brand-new unrelated character):
-Treat the LABELED CURRENT CARD TEXT above as the DRAFT to revise in place.
+REFINE-ALL MODE (DELTA -- critique-first; do NOT invent a brand-new unrelated character):
 
-CREATOR CRITIQUE / NOTES:
+CREATOR CRITIQUE / NOTES (MANDATORY DIRECTIVE PRIORITY):
 ${notes}
 
-PRESERVATION RULES:
-- Revise fields to address the critique while preserving name, core identity, established relationships, speech quirks, and Voice Anchor unless the notes explicitly override them.
-- Keep the Hub flat JSON schema + RESPONSE_SCHEMA_TEMPLATE + POV/Voice Anchor contracts above.
+MANDATORY DIRECTIVE PRIORITY:
+- The critique ABOVE overrides any conflicting parts of the LABELED CURRENT CARD TEXT draft.
+- You MUST actively modify fields to satisfy the critique. Do NOT copy the draft unchanged when notes conflict.
+- Preservation applies ONLY to parts that do NOT conflict with the notes (name/core identity/speech quirks/Voice Anchor when still valid).
+- Address every actionable point in the critique.
+
+PRESERVATION (non-conflicting only):
+- Keep Hub flat JSON schema + RESPONSE_SCHEMA_TEMPLATE + POV/Voice Anchor/relational phrasing contracts above.
 - Still return complete flat Hub JSON for every key (use "" or [] when empty).
 - Enrich gaps only where the notes imply; do not wipe good prose that already fits the critique.
 - first_mes remains a single opener; mes_example remains three progression <START> blocks with {{user}}:/{{char}}: only.`;
 }
+
+
 
 
 /**
@@ -583,6 +619,8 @@ ${FIELD_POV_CONTRACT}
 
 ${VOICE_ANCHOR_RULES}
 
+${RELATIONAL_PHRASING_RULES}
+
 ${MES_EXAMPLE_FORMAT_RULES}
 
 TASK: Build a COMPLETE proper Character Card as a single FLAT JSON object (SillyTavern CCV2/V3 Hub keys — NOT a foreign playground envelope).
@@ -610,7 +648,30 @@ OUTPUT RULES (STRICT — Hub Gen All / import expect ONLY this flat schema):
 ${isV3 ? '- V3 note: keep source / group_only_greetings / alternate_greetings as arrays; tags still a string in this Hub response.' : '- V2-flat: same schema; include group_only_greetings as an array when useful; otherwise [].'}`;
 }
 
-const CARD_AUTHOR_SYSTEM = `You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3) for the AI Companion Hub Gen All pipeline.
+/** Compact body of skills/character-card-studio/SKILL.md -- keep in sync with that file. */
+const CHARACTER_CARD_STUDIO_SKILL_RULES = `CHARACTER CARD STUDIO SKILL (Hub Gen / Refine):
+
+MACROS
+- Lowercase {{user}} / {{char}} only. Possessives: {{user}}'s / {{char}}'s (never {{User's}} / {{user's}}).
+- Ban "The User" / "the user" as nouns -- use {{user}}. Ban User:/Name: speaker labels.
+
+POV
+- description / personality / scenario: 3rd-person authorial about {{char}}.
+- first_mes: in-character opener as {{char}}.
+- mes_example: {{user}}:/{{char}}: with 3-block Public->Private->High-stakes progression (not three hellos).
+- system_prompt: 2nd-person meta directives for the chat model (not mid-scene RP).
+
+RELATIONAL PHRASING
+- Correct: "{{char}} is {{user}}'s younger sister" / "{{char}} is the younger sister of {{user}}".
+- Banned: "the user's sister", bare "the user", "your sister", "X, the user's Y, is...".
+
+REFINE DELTA RULE
+- Creator critique / notes OVERRIDE conflicting draft text.
+- MUST actively modify the draft to satisfy the critique; never copy the draft unchanged when notes conflict.
+- Preserve only parts that do NOT conflict with the notes (identity/voice/format when still valid).
+`;
+
+const CARD_AUTHOR_SYSTEM = `${CHARACTER_CARD_STUDIO_SKILL_RULES}\n\n${RELATIONAL_PHRASING_RULES}\n\nYou are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3) for the AI Companion Hub Gen All pipeline.
 You reorganize and enrich incomplete cards into ONE flat JSON object matching the Hub RESPONSE SCHEMA exactly (keys listed in the user prompt blank template).
 You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt.
 ALWAYS respond with valid JSON only — no markdown, no explanation.
@@ -619,7 +680,7 @@ VOICE ANCHOR (mandatory across the card): Dynamic ({{char}} vs {{user}} vs world
 
 POV: profile fields = 3rd-person authorial; first_mes = IC opening; mes_example = {{user}}/{{char}}; system_prompt = 2nd-person meta directives for the chat model.
 
-MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}/{{user's}}; ban The User; ban User:/Name: labels.
+MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}/{{user's}}; ban The User / the user; ban User:/Name: labels. Follow RELATIONAL PHRASING ({{char}} is {{user}}'s ... -- never the banned patterns).
 
 OUTPUT RULES (non-negotiable):
 - ONLY the Hub flat schema. Fill every key; use "" or [] when empty.
@@ -663,7 +724,7 @@ function collectContextParts(existingFields: Record<string, unknown> | null | un
 // Card-authoring models: prefer strong general instruct (GLM/Qwen), not RP/uncensored Venice personas.
 // Venice whole-card uses streaming: wait while chunks arrive; abort only on stall/hung or wall clock.
 // include_venice_system_prompt stays false. OpenRouter fallback: current free Gemma 4 instruct.
-const VENICE_CARD_MODEL = 'zai-org-glm-4.7-flash';
+const VENICE_CARD_MODEL = 'qwen-3-6-plus';
 const OPENROUTER_CARD_MODEL = 'google/gemma-4-31b-it:free';
 /** No chunk for this long => hung (not a blunt hard kill while tokens are flowing). */
 const VENICE_STALL_MS = 20_000;
@@ -1129,10 +1190,12 @@ ${text}`;
         // Single-field with notes: ALWAYS targeted plain-text path (even if sparse context).
         const prompt = buildRefinementFieldPrompt(fieldKey, draft, notes, existingFields, isV3);
         const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
-        const singleSystem = `You are an expert Character Card field editor for SillyTavern CCV2/V3.
-Revise ONLY the requested field draft per the creator critique. Do not start from scratch.
+        const singleSystem = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
+
+You are an expert Character Card field editor for SillyTavern CCV2/V3.
+Revise ONLY the requested field draft per the creator critique. Critique overrides conflicting draft; MUST actively modify; do not copy draft unchanged when notes conflict.
 Write ONLY the revised field text. No JSON, no markdown fences, no commentary.
-Follow Voice Anchor + POV + macro rules in the user prompt.`;
+Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt.`;
         const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
         let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
         if (typeof fieldValue === 'string') {
@@ -1148,9 +1211,11 @@ Follow Voice Anchor + POV + macro rules in the user prompt.`;
       if (useTargeted) {
         const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3);
         const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
-        const singleSystem = `You are an expert Character Card field author for SillyTavern CCV2/V3.
+        const singleSystem = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
+
+You are an expert Character Card field author for SillyTavern CCV2/V3.
 Write ONLY the requested field text. No JSON, no markdown fences, no commentary.
-Follow Voice Anchor + POV + macro rules in the user prompt.`;
+Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt.`;
         const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
         let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
         // Strip accidental fences

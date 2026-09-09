@@ -192,6 +192,9 @@ export function sanitizeCardMacros(text: string, fieldName?: string): string {
   // Ban "The User" as a noun phrase
   out = out.replace(/\bThe User\b/g, '{{user}}');
   out = out.replace(/\bthe User\b/g, '{{user}}');
+  // Case-insensitive: possessives BEFORE bare "the user"
+  out = out.replace(/\bthe user's\b/gi, "{{user}}'s");
+  out = out.replace(/\bthe user\b/gi, '{{user}}');
 
   // Speaker labels at line start
   out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');

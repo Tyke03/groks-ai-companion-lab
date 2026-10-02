@@ -2,6 +2,7 @@ import { Layout } from "@/components/Layout";
 import { CalendarDays, Bell } from "lucide-react";
 
 const updates = [
+  { date: "2026-09-04", tag: "UX", title: "Workbench defaults to Character Card Builder", body: "Local workbench opens on Character Card Builder; Doc Consolidator is secondary with a searchable platform picker. Discover filters collapse by default so cards stay above the fold." },
   { date: "2026-08-19", tag: "Hub", title: "AI Companion Hub launches expanded comparison filters", body: "Directory filters now combine category, content level, capabilities, access model, and character-card compatibility." },
   { date: "2026-08-12", tag: "Models", title: "Local inference continues to move toward larger context", body: "LM Studio, Ollama, and Open WebUI make it easier to run OpenAI-compatible local endpoints for creator workflows." },
   { date: "2026-08-05", tag: "Cards", title: "Character Card V3 asset declarations added", body: "The card builder now exposes placeholders for expression sprites, alternate outfits, and greeting audio." },

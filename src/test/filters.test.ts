@@ -49,7 +49,7 @@ describe("content filter semantics", () => {
     expect(matchesContent(bySlug("janitor-ai"), "sfw")).toBe(false);
   });
 
-  it("Unfiltered / NSFW matches contentLevel >= 3", () => {
+  it("Moderate+ / NSFW matches contentLevel >= 3", () => {
     expect(matchesContent(bySlug("janitor-ai"), "unfiltered")).toBe(true); // level 3
     expect(matchesContent(bySlug("sillytavern"), "unfiltered")).toBe(true); // level 5
     expect(matchesContent(bySlug("pephop-ai"), "unfiltered")).toBe(false); // level 2 excluded
@@ -94,6 +94,20 @@ describe("access and card matching never treats unknown as true", () => {
     expect(matchesCard(bySlug("sillytavern"), "v3")).toBe(true);
     expect(matchesCard(bySlug("tavernai"), "v3")).toBe(false);
     expect(matchesCard(bySlug("pygmalionai"), "native")).toBe(false); // model provider has no specs
+  });
+});
+
+describe("filterChatbots presentation order", () => {
+  it("empty filters returns platforms A-Z by name", () => {
+    const result = filterChatbots(chatbots, EMPTY_FILTER_STATE);
+    expect(result.length).toBe(chatbots.length);
+    const names = result.map((b) => b.name);
+    const sorted = [...names].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+    expect(names).toEqual(sorted);
+    // Spot-check: Agnaistic precedes SillyTavern alphabetically
+    expect(names.indexOf("Agnaistic")).toBeLessThan(names.indexOf("SillyTavern"));
   });
 });
 

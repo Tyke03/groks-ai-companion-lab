@@ -21,9 +21,9 @@ afterEach(() => {
 
 describe("Supabase is not configured", () => {
   it("renders the Doc Consolidator without crashing and explains the AI backend is unavailable", async () => {
-    render(<DocConsolidator />);
+    render(<MemoryRouter><DocConsolidator /></MemoryRouter>);
     expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
-    expect(await screen.findByText(/AI backend unavailable/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Mode: Offline only \(AI unavailable\)/i)).toBeInTheDocument();
     expect(screen.getByText(/Supabase is not configured/i)).toBeInTheDocument();
   });
 

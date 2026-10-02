@@ -41,7 +41,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
       </a>
       <Navigation />
       {children}
-      <footer className="border-t border-border mt-12">
+      <footer className="border-t border-border mt-12 section-band">
         <div className="container mx-auto px-4 py-10">
           <div className="grid gap-8 sm:grid-cols-3">
             <div>
@@ -50,19 +50,20 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                 <span className="font-display text-lg font-bold">AI Companion Hub</span>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                A curated directory of AI chatbot platforms, local frontends, and
-                companion apps — with setup docs, comparison tools, and creator
-                resources. Built by and for roleplay power users.
+                A verification-first directory and local workbench for AI companion platforms.
+                We catalog with dated evidence and help you draft cards and prompts on your machine —
+                we do not host models, run live chat, or take payments.
               </p>
             </div>
             <div>
               <h3 className="text-sm font-semibold text-foreground mb-3">Explore</h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><Link to="/" className="hover:text-primary transition-colors">Directory</Link></li>
-                <li><Link to="/docs" className="hover:text-primary transition-colors">Documentation</Link></li>
-                <li><Link to="/tools" className="hover:text-primary transition-colors">Tools</Link></li>
-                <li><Link to="/blog" className="hover:text-primary transition-colors">Blog</Link></li>
+                <li><Link to="/" className="hover:text-primary transition-colors">Discover</Link></li>
                 <li><Link to="/compare" className="hover:text-primary transition-colors">Compare</Link></li>
+                <li><Link to="/tools" className="hover:text-primary transition-colors">Workbench</Link></li>
+                <li><Link to="/docs" className="hover:text-primary transition-colors">Guides</Link></li>
+                <li><Link to="/prompts" className="hover:text-primary transition-colors">Prompts</Link></li>
+                <li><Link to="/blog" className="hover:text-primary transition-colors">Blog</Link></li>
                 <li><Link to="/updates" className="hover:text-primary transition-colors">Updates</Link></li>
                 <li><Link to="/community" className="hover:text-primary transition-colors">Community</Link></li>
               </ul>
@@ -90,7 +91,8 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
           </div>
           <div className="mt-8 border-t border-border pt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">
-              This directory is for informational purposes. Always verify platform policies before use. Users must be 18+.
+              Informational directory only. Always verify platform policies before use. Users must be 18+.
+              No hosted models, live chat, or payments on this site.
             </p>
             {lastUpdated && (
               <p className="text-xs text-muted-foreground">

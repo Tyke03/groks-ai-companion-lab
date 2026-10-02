@@ -22,7 +22,7 @@ const Documentation = () => {
             Documentation Hub
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Setup guides, API configuration, community resources, and troubleshooting for major NSFW AI platforms.
+            Setup guides, API configuration, community resources, and troubleshooting for major companion and roleplay platforms.
           </p>
         </div>
       </header>
@@ -31,7 +31,6 @@ const Documentation = () => {
         {/* Documented platforms */}
         <h2 className="font-display text-xl font-semibold text-foreground mb-6">
           Platforms with Full Guides ({documentedPlatforms.length})
-          <span className="sr-only">Platforms with Full Guides (16)</span>
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-12">
           {documentedPlatforms.map((bot) => {

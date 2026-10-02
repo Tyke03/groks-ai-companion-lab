@@ -21,7 +21,7 @@ const Blog = () => {
   return (
     <Layout>
       <Helmet>
-        <title>Blog — NSFW AI Insights</title>
+        <title>Blog — AI Companion Hub</title>
       </Helmet>
       <header className="border-b border-border">
         <div className="container mx-auto px-4 py-8 sm:py-12">
@@ -30,7 +30,7 @@ const Blog = () => {
             <span className="text-xs font-medium uppercase tracking-widest text-primary">Blog</span>
           </div>
           <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl glow-text mb-3">
-            NSFW AI Insights
+            Guides &amp; comparisons
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
             Guides, comparisons, tutorials, and deep dives into the world of AI chatbots, character creation, and roleplay platforms.

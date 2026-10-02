@@ -5,10 +5,27 @@ import {
   renderPromptTemplate,
 } from "@/data/promptTemplates";
 
+const EXPECTED_IDS = [
+  "system-roleplay",
+  "character-card-fields",
+  "greeting-first-mes",
+  "rp-scene-starter",
+  "lorebook-entry",
+  "sillytavern-authors-note",
+  "ooc-story-framing",
+  "style-action-sensory",
+  "scenario-setup",
+] as const;
+
 describe("prompt template metadata", () => {
-  it("keeps all 18 templates and classifies only SillyTavern Author's Note as platform-specific", () => {
-    expect(promptTemplates).toHaveLength(18);
-    expect(new Set(promptTemplates.map((template) => template.id)).size).toBe(18);
+  it("keeps nine lean templates and classifies only SillyTavern Author's Note as platform-specific", () => {
+    expect(promptTemplates).toHaveLength(9);
+    expect(promptTemplates.map((template) => template.id)).toEqual([...EXPECTED_IDS]);
+    expect(new Set(promptTemplates.map((template) => template.id)).size).toBe(9);
+
+    for (const template of promptTemplates) {
+      expect(template.useWhen.trim().length).toBeGreaterThan(0);
+    }
 
     const verified = promptTemplates.filter((template) => template.compatibility[0]?.lane === "verified-platform");
     expect(verified.map((template) => template.id)).toEqual(["sillytavern-authors-note"]);
@@ -46,7 +63,8 @@ describe("prompt template metadata", () => {
 
     const sillyTavern = promptTemplates.find((template) => template.id === "sillytavern-authors-note");
     expect(sillyTavern?.template).toContain("{{user}}");
-    expect(promptTemplates.find((template) => template.id === "api-system-prompt")?.template).not.toContain("{{user}}");
+    expect(promptTemplates.find((template) => template.id === "system-roleplay")?.template).not.toContain("{{user}}");
+    expect(promptTemplates.some((template) => /unrestricted|filter-override/i.test(template.id))).toBe(false);
   });
 
   it("renders author fields without substituting runtime macros", () => {
@@ -72,6 +90,7 @@ describe("legacy local template normalization", () => {
     expect(normalized).toMatchObject({
       id: "custom-legacy",
       userCreated: true,
+      useWhen: expect.stringMatching(/local/i),
       compatibility: [{ lane: "universal", target: "Universal", format: "plain-text", confidence: "Not applicable" }],
     });
     expect(normalized?.template).toBe("Use [Topic] with [Character Name].");

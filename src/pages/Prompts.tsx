@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Check, Copy, Heart, Plus, X } from "lucide-react";
+import { Heart, Plus, X, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const customKey = "ai-companion-hub-custom-prompts";
@@ -40,7 +40,7 @@ const Prompts = () => {
   const { toast } = useToast();
   const all = useMemo(() => [...promptTemplates, ...custom], [custom]);
   const filtered = useMemo(
-    () => all.filter((item) => `${item.name} ${item.description} ${item.category}`.toLowerCase().includes(query.toLowerCase())),
+    () => all.filter((item) => `${item.name} ${item.description} ${item.category} ${item.useWhen}`.toLowerCase().includes(query.toLowerCase())),
     [all, query],
   );
 
@@ -62,6 +62,7 @@ const Prompts = () => {
       name: name.trim(),
       category: tags.trim() || "Custom",
       description: `User-created local template${tags.trim() ? ` · ${tags.trim()}` : ""}`,
+      useWhen: "User-created local draft — paste into SillyTavern or your host where it fits.",
       template,
       variables: [],
     });
@@ -81,12 +82,14 @@ const Prompts = () => {
       <header className="border-b border-border">
         <div className="container mx-auto px-4 py-8 sm:py-12">
           <h1 className="font-display text-3xl font-bold text-foreground sm:text-5xl glow-text">Prompt Library</h1>
-          <p className="mt-3 max-w-2xl text-muted-foreground">Verified platform guidance plus Universal plain-text styles, scenarios, and genre starters. Custom templates stay local to your browser.</p>
+          <p className="mt-3 max-w-2xl text-muted-foreground">
+            Lean median drafts you fill locally, then paste into SillyTavern or your host. Verified Author&apos;s Note stays platform-native; everything else is Universal plain text. AI assist is optional.
+          </p>
         </div>
       </header>
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8">
         <div className="mb-6 flex flex-wrap gap-3">
-          <Input aria-label="Search prompt templates" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prompts, styles, genres..." className="max-w-md bg-secondary" />
+          <Input aria-label="Search prompt templates" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prompts, use-when, categories..." className="max-w-md bg-secondary" />
           <Button onClick={() => setShowCreator((value) => !value)}><Plus className="h-4 w-4" /> Create Custom Template</Button>
         </div>
 
@@ -117,6 +120,12 @@ const Prompts = () => {
                 </div>
 
                 <p className="mt-2 flex-1 text-sm text-muted-foreground">{item.description}</p>
+                {item.useWhen && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Use when: </span>
+                    {item.useWhen}
+                  </p>
+                )}
                 <dl className="mt-4 grid grid-cols-2 gap-2 rounded-lg border border-border bg-secondary/30 p-3 text-xs">
                   <div><dt className="text-muted-foreground">Target</dt><dd className="font-medium text-foreground">{compatibility.target}</dd></div>
                   <div><dt className="text-muted-foreground">Artifact</dt><dd className="font-medium text-foreground">{labelFor(compatibility.artifactType)}</dd></div>
@@ -125,7 +134,7 @@ const Prompts = () => {
                   <div className="col-span-2"><dt className="text-muted-foreground">Runtime macros</dt><dd className="font-mono text-foreground">{compatibility.runtimeMacros.length > 0 ? compatibility.runtimeMacros.join(", ") : "None"}</dd></div>
                 </dl>
                 <p className="mt-3 text-xs text-muted-foreground">{compatibility.pasteInstructions}</p>
-                {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-2 text-xs text-amber-300/90">Note: {caveat}</p>)}
+                {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-2 neon-callout text-xs" role="note">Note: {caveat}</p>)}
                 <pre tabIndex={0} className="my-4 max-h-36 overflow-auto whitespace-pre-wrap rounded-lg bg-secondary/60 p-3 text-xs text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{item.template}</pre>
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => copyRaw(item)}><Copy className="h-3.5 w-3.5" /> Copy raw template</Button>

@@ -90,7 +90,7 @@ const Community = () => {
             Community & Resources
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Reddit threads, Discord servers, character libraries, and community hubs for the NSFW AI chatbot ecosystem.
+            Reddit threads, Discord servers, character libraries, and community hubs for the AI companion and roleplay ecosystem.
           </p>
         </div>
       </header>

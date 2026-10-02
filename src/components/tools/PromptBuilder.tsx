@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Copy, Check, Sparkles, Upload, Loader2, Wand2, WifiOff } from "lucide-react";
+import { Copy, Check, Sparkles, Upload, Loader2, Wand2, WifiOff, ListChecks, FileDown } from "lucide-react";
 import {
   getPrimaryCompatibility,
   normalizeLocalTemplates,
@@ -14,6 +14,29 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
+import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
+import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
+import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
+import { formatSlotContext, mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
+import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
+import { filledUniqueKeys, preserveOverlappingVariables } from "@/lib/promptVariableSwitch";
+import {
+  getActiveSlot,
+  loadCardLibrary,
+  saveCardLibrary,
+  updateActiveSlot,
+} from "@/lib/cardStorage";
+import { stashWorkbenchBridge } from "@/lib/workbenchBridges";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const customKey = "ai-companion-hub-custom-prompts";
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -29,6 +52,12 @@ export const PromptBuilder = () => {
   const [importText, setImportText] = useState("");
   const [showRawContext, setShowRawContext] = useState(false);
   const [rawContext, setRawContext] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "restored" | "saved">("idle");
+  const [pendingTemplate, setPendingTemplate] = useState<PromptTemplate | null>(null);
+  const [pendingDiscardKeys, setPendingDiscardKeys] = useState<string[]>([]);
+  const skipStatusFlipRef = useRef(false);
+  const handledUrlTemplateRef = useRef<string | null>(null);
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const ai = useAiBackendStatus();
@@ -36,35 +65,135 @@ export const PromptBuilder = () => {
   const allTemplates = useMemo(() => [...promptTemplates, ...customTemplates], [customTemplates]);
   const compatibility = getPrimaryCompatibility(selectedTemplate);
 
+  const templatesByCategory = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, PromptTemplate[]>();
+    for (const template of allTemplates) {
+      if (!map.has(template.category)) {
+        map.set(template.category, []);
+        order.push(template.category);
+      }
+      map.get(template.category)!.push(template);
+    }
+    return order.map((category) => ({ category, templates: map.get(category)! }));
+  }, [allTemplates]);
+
   useEffect(() => {
+    let customs: PromptTemplate[] = [];
     try {
       const stored = JSON.parse(localStorage.getItem(customKey) || "[]");
-      setCustomTemplates(normalizeLocalTemplates(stored));
+      customs = normalizeLocalTemplates(stored);
+      setCustomTemplates(customs);
     } catch {
       setCustomTemplates([]);
     }
+
+    const draft = loadPromptDraft();
+    if (draft) {
+      const all = [...promptTemplates, ...customs];
+      const match = all.find((template) => template.id === draft.selectedTemplateId);
+      if (match) setSelectedTemplate(match);
+      setVariables(draft.variables);
+      setRawContext(draft.rawContext);
+      setShowRawContext(draft.showRawContext || Boolean(draft.rawContext.trim()));
+      setDraftStatus("restored");
+      skipStatusFlipRef.current = true;
+    }
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
+    const payload = consumeWorkbenchBridge("prompts");
+    if (!payload) return;
+    setShowRawContext(true);
+    setRawContext((prev) => {
+      const block = payload.summary;
+      if (!prev.trim()) return block;
+      if (prev.includes(block)) return prev;
+      return `${prev.trim()}\n\n${block}`;
+    });
+    toast({
+      title: "Doc Consolidator handoff",
+      description: `Placed a short note for ${payload.serviceName} in Raw context.`,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    savePromptDraft({
+      selectedTemplateId: selectedTemplate.id,
+      variables,
+      rawContext,
+      showRawContext,
+    });
+    if (skipStatusFlipRef.current) {
+      skipStatusFlipRef.current = false;
+      return;
+    }
+    const meaningful =
+      Boolean(rawContext.trim()) ||
+      showRawContext ||
+      Object.values(variables).some((value) => value.trim());
+    if (meaningful) setDraftStatus("saved");
+  }, [hydrated, selectedTemplate.id, variables, rawContext, showRawContext]);
+
+
+  const applyTemplateSwitch = (template: PromptTemplate) => {
+    const nextNames = template.variables.map((v) => v.name);
+    setVariables((prev) => preserveOverlappingVariables(prev, nextNames));
+    setSelectedTemplate(template);
+    setCopied(false);
+    setPendingTemplate(null);
+    setPendingDiscardKeys([]);
+  };
+
+  const requestTemplateSwitch = (template: PromptTemplate) => {
+    if (template.id === selectedTemplate.id) return;
+    const nextNames = template.variables.map((v) => v.name);
+    const discard = filledUniqueKeys(variables, nextNames);
+    if (discard.length > 0) {
+      setPendingTemplate(template);
+      setPendingDiscardKeys(discard);
+      return;
+    }
+    applyTemplateSwitch(template);
+  };
+
+  const handleSelectTemplate = (template: PromptTemplate) => {
+    requestTemplateSwitch(template);
+  };
+
+  useEffect(() => {
+    if (!hydrated) return;
     const requestedId = searchParams.get("template");
     if (!requestedId) return;
     const requestedTemplate = allTemplates.find((template) => template.id === requestedId);
-    if (requestedTemplate && requestedTemplate.id !== selectedTemplate.id) {
-      setSelectedTemplate(requestedTemplate);
-      setVariables({});
-    }
-  }, [allTemplates, searchParams, selectedTemplate.id]);
-
-  const handleSelectTemplate = (template: PromptTemplate) => {
-    setSelectedTemplate(template);
-    setVariables({});
-    setCopied(false);
-  };
+    if (!requestedTemplate || requestedTemplate.id === selectedTemplate.id) return;
+    if (handledUrlTemplateRef.current === requestedId) return;
+    handledUrlTemplateRef.current = requestedId;
+    requestTemplateSwitch(requestedTemplate);
+    // Intentionally after draft hydrate so unique filled vars can warn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, allTemplates, searchParams, selectedTemplate.id]);
 
   const getRenderedPrompt = () => renderPromptTemplate(selectedTemplate, variables);
   const hasUnresolvedPlaceholders = selectedTemplate.variables.some(
     (variable) => !variables[variable.name]?.trim() && !variable.placeholder.trim(),
   );
+
+  const handleFillExamples = () => {
+    const next: Record<string, string> = {};
+    for (const variable of selectedTemplate.variables) {
+      if (variable.placeholder.trim()) next[variable.name] = variable.placeholder;
+    }
+    setVariables(next);
+    setCopied(false);
+    toast({
+      title: "Example values filled",
+      description: "Local placeholders only — no AI. Edit before copying into SillyTavern or your host.",
+    });
+  };
 
   const handleCopy = async () => {
     if (hasUnresolvedPlaceholders) return;
@@ -91,10 +220,14 @@ export const PromptBuilder = () => {
           rawContext: rawContext.trim() || undefined,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error) {
+        toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
+        return;
+      }
       if (data?.result) setVariables((prev) => ({ ...prev, [varName]: data.result }));
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to generate.", variant: "destructive" });
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate."), variant: "destructive" });
     } finally {
       setGeneratingVar(null);
     }
@@ -123,77 +256,116 @@ export const PromptBuilder = () => {
           rawContext: rawContext.trim() || undefined,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error && !data?.result) {
+        toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
+        return;
+      }
       if (data?.result && typeof data.result === "object") {
         setVariables((prev) => ({ ...prev, ...data.result }));
         toast({ title: "Generated", description: `Filled ${Object.keys(data.result).length} variables.` });
       }
     } catch (err) {
-      toast({ title: "Error", description: errMsg(err) || "Failed to generate all.", variant: "destructive" });
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate all."), variant: "destructive" });
     } finally {
       setGeneratingAll(false);
     }
   };
 
+  const applyCardFields = (fields: Record<string, unknown>, alsoRaw = false, labeled = "") => {
+    const newVars = mapCardFieldsToVariables(
+      fields,
+      selectedTemplate.variables.map((variable) => variable.name),
+    );
+    if (Object.keys(newVars).length > 0) {
+      setVariables((prev) => ({ ...prev, ...newVars }));
+    }
+    if (alsoRaw && labeled.trim()) {
+      setRawContext((prev) => (prev.trim() ? `${prev.trim()}\n\n${labeled}` : labeled));
+      setShowRawContext(true);
+    }
+    return Object.keys(newVars).length;
+  };
+
   const handlePopulateFromCard = () => {
     if (!importText.trim()) {
-      toast({ title: "Empty", description: "Paste character card JSON to populate.", variant: "destructive" });
+      toast({ title: "Empty", description: "Paste character card JSON or pick a Workbench card.", variant: "destructive" });
       return;
     }
-    try {
-      let parsed = JSON.parse(importText);
-      if (parsed?.data) parsed = parsed.data;
-
-      const mapping: Record<string, string[]> = {
-        character_name: ["name"],
-        character_role: ["personality"],
-        setting: ["scenario"],
-        personality_traits: ["personality"],
-        speaking_style: ["personality"],
-        scenario_title: ["scenario"],
-        setting_description: ["scenario"],
-        context: ["scenario", "description"],
-        action_description: ["first_mes"],
-        greeting_dialogue: ["first_mes"],
-        scene_description: ["scenario"],
-        entry_name: ["name"],
-        description: ["description"],
-      };
-
-      const newVars: Record<string, string> = {};
-      for (const variable of selectedTemplate.variables) {
-        const sources = mapping[variable.name];
-        if (sources) {
-          for (const source of sources) {
-            if (parsed[source] && typeof parsed[source] === "string" && parsed[source].trim()) {
-              newVars[variable.name] = parsed[source].substring(0, 200);
-              break;
-            }
-          }
-        }
-      }
-
-      if (Object.keys(newVars).length > 0) {
-        setVariables((prev) => ({ ...prev, ...newVars }));
-        toast({ title: "Populated", description: `Filled ${Object.keys(newVars).length} variables from character card.` });
-      } else {
-        toast({ title: "No matches", description: "No fields could be mapped to this template's variables.", variant: "destructive" });
-      }
-      setShowImport(false);
-      setImportText("");
-    } catch {
-      toast({ title: "Invalid JSON", description: "Could not parse the pasted data as JSON.", variant: "destructive" });
+    const parsed = parsePopulateCardJson(importText);
+    if (!parsed) {
+      toast({
+        title: "Could not read card",
+        description: "Accepted: chara_card_v2 / chub_2 / V3 envelopes, or near-valid flat card JSON with name + fields.",
+        variant: "destructive",
+      });
+      return;
     }
+    const filled = applyCardFields(parsed);
+    if (filled > 0) {
+      toast({ title: "Populated", description: `Filled ${filled} variables from character card.` });
+    } else {
+      toast({ title: "No matches", description: "No fields could be mapped to this template's variables.", variant: "destructive" });
+    }
+    setShowImport(false);
+    setImportText("");
   };
+
+  const handleWorkbenchCardPick = (pick: WorkbenchCardPick) => {
+    // Full labeled workbench card text — no compact/truncate governor for Prompt Gen.
+    const fullContext = pick.contextText || formatSlotContext(pick.slot);
+    const filled = applyCardFields(pick.fields, true, fullContext);
+    toast({
+      title: "Workbench card applied",
+      description: filled > 0
+        ? `Filled ${filled} variables from "${pick.slot.label}" and added labeled fields to raw context.`
+        : `Added "${pick.slot.label}" labeled fields to raw context.`,
+    });
+  };
+
+  const handleApplyToActiveCard = (field: "system_prompt" | "post_history_instructions") => {
+    const rendered = getRenderedPrompt();
+    if (!rendered.trim()) {
+      toast({ title: "Empty prompt", description: "Fill the template before applying to the card.", variant: "destructive" });
+      return;
+    }
+    const library = loadCardLibrary();
+    const active = getActiveSlot(library);
+    const next = updateActiveSlot(library, {
+      card: { ...active.card, [field]: rendered },
+    });
+    saveCardLibrary(next);
+    stashWorkbenchBridge({
+      target: "character",
+      serviceName: selectedTemplate.name,
+      summary: field === "system_prompt"
+        ? "[From Prompt Builder] Applied rendered prompt to system_prompt."
+        : "[From Prompt Builder] Applied rendered prompt to post_history_instructions.",
+      applyField: field,
+      applyText: rendered,
+    });
+    toast({
+      title: field === "system_prompt" ? "Applied to system prompt" : "Applied to post-history",
+      description: `Saved onto active card “${active.label}”. Open Character Card Builder to review.`,
+    });
+  };
+
 
   return (
     <div className="max-w-3xl space-y-6">
       <div>
         <h2 className="mb-2 font-display text-xl font-semibold text-foreground">Prompt Builder</h2>
         <p className="text-sm text-muted-foreground">
-          Fill author fields to create roleplay system prompts, scenarios, style guides, and lorebook drafts. Verified runtime macros are preserved literally for their target platform.
+          Draft locally, then paste into SillyTavern or your host. Fill example values works offline; AI generate is optional.
         </p>
+        {draftStatus !== "idle" && (
+          <p className="mt-2 text-xs text-muted-foreground" data-testid="prompt-draft-status">
+            {draftStatus === "restored" ? "Draft restored from this browser." : "Draft saved in this browser."}
+          </p>
+        )}
       </div>
+
+      <NeonSectionDivider />
 
       {ai.status === "checking" && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
@@ -201,32 +373,43 @@ export const PromptBuilder = () => {
         </div>
       )}
       {aiUnavailable && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+        <div className="neon-callout-box flex items-start gap-3 px-4 py-3" role="status">
+          <WifiOff className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="text-sm">
-            <p className="font-medium text-amber-300">AI backend unavailable</p>
-            <p className="text-muted-foreground">Manual template filling, character-card population, and copying still work. AI generation is disabled until the backend is reachable again.</p>
+            <p className="font-medium neon-callout">AI backend unavailable</p>
+            <p>Fill example values, edit fields, populate from card JSON, and copy — all work offline. AI generation stays disabled.</p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
         </div>
       )}
 
-      <div>
-        <span id="prompt-template-label" className="mb-2 block text-sm font-medium text-foreground">Select Template</span>
-        <div role="group" aria-labelledby="prompt-template-label" className="flex flex-wrap gap-2">
-          {allTemplates.map((template) => (
-            <button
-              key={template.id}
-              type="button"
-              onClick={() => handleSelectTemplate(template)}
-              aria-pressed={selectedTemplate.id === template.id}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selectedTemplate.id === template.id ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground hover:text-foreground"}`}
-            >
-              {template.name}{template.userCreated ? " · Local" : ""}
-            </button>
-          ))}
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">{selectedTemplate.description}</p>
+      <div className="space-y-4">
+        <span id="prompt-template-label" className="block text-sm font-medium text-foreground">Select Template</span>
+        {templatesByCategory.map((group) => (
+          <div key={group.category}>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.category}</p>
+            <div role="group" aria-labelledby="prompt-template-label" className="flex flex-wrap gap-2">
+              {group.templates.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => handleSelectTemplate(template)}
+                  aria-pressed={selectedTemplate.id === template.id}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selectedTemplate.id === template.id ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground hover:text-foreground"}`}
+                >
+                  {template.name}{template.userCreated ? " · Local" : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        <p className="text-xs text-muted-foreground">{selectedTemplate.description}</p>
+        {selectedTemplate.useWhen && (
+          <p className="neon-callout-box" role="note">
+            <span className="font-medium">Use when: </span>
+            {selectedTemplate.useWhen}
+          </p>
+        )}
       </div>
 
       <div className="rounded-lg border border-border bg-secondary/20 p-4">
@@ -241,17 +424,23 @@ export const PromptBuilder = () => {
         <p className="mt-2 text-xs text-muted-foreground">
           Runtime macros: {compatibility.runtimeMacros.length > 0 ? compatibility.runtimeMacros.join(", ") : "None"}
         </p>
-        {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-1 text-xs text-amber-300/90">Note: {caveat}</p>)}
+        {compatibility.caveats?.map((caveat) => <p key={caveat} className="mt-1 neon-callout text-xs" role="note">Note: {caveat}</p>)}
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <NeonSectionDivider />
+
+      <div className="flex flex-wrap gap-2 items-start">
+        <Button variant="outline" size="sm" onClick={handleFillExamples} disabled={selectedTemplate.variables.length === 0}>
+          <ListChecks className="h-4 w-4" /> Fill example values
+        </Button>
+        <WorkbenchCardPicker onSelect={handleWorkbenchCardPick} />
         <Button variant="outline" size="sm" aria-expanded={showImport} aria-controls="prompt-import-panel" onClick={() => setShowImport(!showImport)}><Upload className="h-4 w-4" /> Populate from Card / JSON</Button>
         <Button variant="outline" size="sm" aria-expanded={showRawContext} aria-controls="prompt-raw-context-panel" onClick={() => setShowRawContext(!showRawContext)}><Wand2 className="h-4 w-4" /> Paste Raw Text as Context</Button>
       </div>
 
       {showImport && (
         <div id="prompt-import-panel" className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4">
-          <p className="text-sm text-muted-foreground">Paste character card JSON and matching fields will be mapped to author placeholders in this template.</p>
+          <p className="text-sm text-muted-foreground">Paste character card JSON (chara_card_v2 / chub_2 / V3 / near-valid flat) — or use Populate from Workbench card above to skip copy/paste.</p>
           <Textarea aria-label="Character card JSON to map" placeholder="Paste character card JSON or character card data..." value={importText} onChange={(event) => setImportText(event.target.value)} className="min-h-[100px] border-border bg-secondary font-mono text-sm" />
           <div className="flex gap-2"><Button size="sm" onClick={handlePopulateFromCard}><Upload className="h-4 w-4" /> Populate</Button><Button variant="ghost" size="sm" onClick={() => { setShowImport(false); setImportText(""); }}>Cancel</Button></div>
         </div>
@@ -266,20 +455,20 @@ export const PromptBuilder = () => {
       )}
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="text-sm font-medium text-foreground">Author fields</h3>
           <div className="flex items-center gap-2">
             {rawContext.trim() && <span className="inline-flex items-center gap-1 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600"><Check className="h-3 w-3" /> Context active</span>}
             <Button variant="outline" size="sm" onClick={handleGenerateAll} disabled={generatingAll || generatingVar !== null || aiUnavailable}>
               {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {generatingAll ? "Generating..." : "Generate All"}
+              {generatingAll ? "Generating..." : "AI Generate all"}
             </Button>
           </div>
         </div>
         {selectedTemplate.variables.length === 0 && <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">This template has no author fields. Any verified runtime macros remain literal in the output.</p>}
         {selectedTemplate.variables.map((variable) => (
           <div key={variable.name}>
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex items-center justify-between gap-2">
               <label htmlFor={`template-variable-${variable.name}`} className="text-xs text-muted-foreground">
                 {variable.label} <code className="ml-1 rounded bg-secondary px-1 text-primary">{variable.token}</code> — {variable.description}
               </label>
@@ -294,12 +483,71 @@ export const PromptBuilder = () => {
       </div>
 
       <div>
-        <div className="mb-2 flex items-center justify-between">
-          <div><h3 className="font-display font-semibold text-foreground">Generated Prompt</h3>{hasUnresolvedPlaceholders && <p className="text-xs text-amber-300">Fill the fields without examples before copying.</p>}</div>
-          <Button variant="outline" size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? "Copied" : "Copy filled output"}</Button>
+        <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h3 className="font-display font-semibold text-foreground">Generated Prompt</h3>
+            {hasUnresolvedPlaceholders && <p className="neon-callout text-xs" role="note">Fill the fields without examples before copying — or use Fill example values.</p>}
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <Button size="sm" onClick={handleCopy} disabled={hasUnresolvedPlaceholders}>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? "Copied" : "Copy filled output"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleApplyToActiveCard("system_prompt")}
+              disabled={hasUnresolvedPlaceholders}
+              data-testid="apply-prompt-system"
+            >
+              <FileDown className="h-4 w-4" /> Apply to active card system prompt
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleApplyToActiveCard("post_history_instructions")}
+              disabled={hasUnresolvedPlaceholders}
+              data-testid="apply-prompt-post-history"
+            >
+              <FileDown className="h-4 w-4" /> Apply to post-history
+            </Button>
+          </div>
         </div>
+        <p className="mb-2 neon-callout text-xs" role="note">
+          Apply writes the rendered prompt onto the Workbench active card (local only). Switch to Character Card Builder to review — this does not call a chat host.
+        </p>
         <pre tabIndex={0} aria-label="Generated prompt output" className="max-h-[400px] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/50 p-4 font-mono text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{getRenderedPrompt()}</pre>
       </div>
+
+      <AlertDialog open={pendingTemplate !== null} onOpenChange={(open) => { if (!open) { setPendingTemplate(null); setPendingDiscardKeys([]); } }}>
+        <AlertDialogContent data-testid="template-switch-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch template and discard unique fields?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  Shared variable keys will be kept. These filled fields exist only on the current template and are not on “{pendingTemplate?.name}”:
+                </p>
+                <ul className="list-disc pl-5">
+                  {pendingDiscardKeys.map((key) => (
+                    <li key={key}><code className="text-foreground">{key}</code></li>
+                  ))}
+                </ul>
+                <p>Confirm to switch (unique values are discarded). Cancel keeps your current template and values.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (pendingTemplate) applyTemplateSwitch(pendingTemplate); }}
+              data-testid="template-switch-confirm-action"
+            >
+              Switch and discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

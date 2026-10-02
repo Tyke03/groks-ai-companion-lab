@@ -1,6 +1,6 @@
-# NSFW AI Chatbot Directory
+# AI Companion Hub
 
-A curated directory of NSFW AI chatbot platforms — local frontends, hosted roleplay platforms, character libraries, companion apps, model providers, and image+chat hybrids — with setup documentation, comparison tools, and creator resources for roleplay power users.
+A curated directory of AI companion and roleplay platforms — local frontends, hosted roleplay platforms, character libraries, companion apps, model providers, and image+chat hybrids — with setup documentation, comparison tools, and creator resources for roleplay power users. Adult content levels are disclosed per platform; this site does not run models.
 
 ## What's inside
 

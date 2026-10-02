@@ -45,6 +45,8 @@ const countText = (n: number) => `${n} of ${total} platforms`;
 
 beforeEach(() => {
   localStorage.setItem("age_verified", "1");
+  // Discover filters default collapsed; expand for control assertions.
+  localStorage.setItem("discover_filters_open", "1");
 });
 
 afterEach(() => {
@@ -61,20 +63,20 @@ describe("Directory filter controls", () => {
     renderPage();
     expect(screen.getByRole("radio", { name: /All \(\d+\)/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "SFW only" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Toggleable" })).toBeInTheDocument();
   });
 
   it("content single-select is mutually exclusive", () => {
     renderPage();
     const sfw = screen.getByRole("radio", { name: "SFW only" });
-    const unfiltered = screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ });
+    const unfiltered = screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ });
     fireEvent.click(sfw);
     expect(screen.getByRole("radio", { name: "SFW only" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ })).toHaveAttribute("aria-checked", "false");
     fireEvent.click(unfiltered);
     expect(screen.getByRole("radio", { name: "SFW only" })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("radio", { name: /Unfiltered \/ NSFW/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /Moderate\+ \/ NSFW/ })).toHaveAttribute("aria-checked", "true");
   });
 
   it("features are multi-select toggles", () => {
@@ -109,8 +111,15 @@ describe("Directory filter controls", () => {
     expect(screen.getByText("No platforms match your search and filters.")).toBeInTheDocument();    expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
   });
 
-  it("exposes the mobile filters trigger", () => {
+  it("exposes the Filters toggle (collapsed chrome)", () => {
     renderPage();
-    expect(screen.getByRole("button", { name: /Filters/ })).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /Filters/ });
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("radio", { name: "SFW only" })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByRole("radio", { name: "SFW only" })).toBeInTheDocument();
   });
 });

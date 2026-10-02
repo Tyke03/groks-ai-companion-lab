@@ -34,8 +34,9 @@ describe("Prompts page", () => {
 
     expect(screen.getAllByText("Universal").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Plain text").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: "Copy raw template" })).toHaveLength(18);
-    expect(screen.getAllByRole("link", { name: "Open in Builder" })).toHaveLength(18);
+    expect(screen.getAllByRole("button", { name: "Copy raw template" })).toHaveLength(9);
+    expect(screen.getAllByRole("link", { name: "Open in Builder" })).toHaveLength(9);
+    expect(screen.getAllByText(/Use when:/i).length).toBeGreaterThanOrEqual(9);
     expect(screen.queryByRole("button", { name: "Open-source" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Native web" })).not.toBeInTheDocument();
 
@@ -46,6 +47,7 @@ describe("Prompts page", () => {
     expect(card).toHaveTextContent("Author's Note");
     expect(card).toHaveTextContent("Platform-native");
     expect(card).toHaveTextContent("{{user}}");
+    expect(card).toHaveTextContent("Use when:");
 
     fireEvent.click(card!.querySelector("button[aria-label^='Favorite']")!);
     fireEvent.click(screen.getAllByRole("button", { name: "Copy raw template" })[0]);
@@ -70,6 +72,7 @@ describe("Prompts page", () => {
     expect(card).toHaveTextContent("Plain text");
     expect(card).toHaveTextContent("User-created");
     expect(card).toHaveTextContent("[Topic]");
+    expect(card).toHaveTextContent("Use when:");
     expect(card?.querySelector("a")).toHaveAttribute("href", "/tools?tab=prompts&template=custom-legacy");
   });
 });

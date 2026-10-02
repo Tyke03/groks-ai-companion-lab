@@ -29,7 +29,7 @@ const BlogPost = () => {
   return (
     <Layout>
       <Helmet>
-        <title>{post.title} — NSFW AI Insights</title>
+        <title>{post.title} — AI Companion Hub</title>
       </Helmet>
       <header className="border-b border-border">
         <div className="container mx-auto px-4 py-8 sm:py-12 max-w-3xl">

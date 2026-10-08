@@ -47,11 +47,11 @@ const Tools = () => {
             Local workbench
           </h1>
           <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-            Start with Character Card Builder, then Lorebook or prompts. Doc Consolidator is secondary — paste notes to draft a Hub guide. Everything runs locally; AI assist is optional. Not hosted chat, and not a place to enter API keys.
+            Start with Character Card Builder, then Lorebook or prompts. Doc Consolidator is secondary — paste notes to draft a Hub guide. Everything runs locally; AI assist is optional. Not hosted chat. An optional OpenRouter key you add stays in your browser only.
           </p>
           <div className="mt-4 flex flex-wrap gap-2" aria-label="Workbench honesty">
             <span className="honesty-pill">Runs in your browser</span>
-            <span className="honesty-pill">No credential collection</span>
+            <span className="honesty-pill">Keys stay in your browser</span>
             <span className="honesty-pill">Offline drafts work without AI</span>
           </div>
           <div className="mt-6 flex flex-wrap gap-2">

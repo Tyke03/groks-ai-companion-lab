@@ -7,7 +7,7 @@ export function formatLlmCascadeError(raw: unknown): string {
   const parts = stripped.split(/\s*\|\s*/).map((p) => p.trim()).filter(Boolean);
 
   const clarify = (part: string): string => {
-    const providerMatch = part.match(/^(Venice|OpenRouter|Lovable)\s*:\s*(.*)$/i);
+    const providerMatch = part.match(/^(Venice|OpenRouter)\s*:\s*(.*)$/i);
     const provider = providerMatch?.[1] ?? "";
     const detail = providerMatch?.[2] ?? part;
 
@@ -23,14 +23,17 @@ export function formatLlmCascadeError(raw: unknown): string {
     if (/invalid JSON/i.test(detail)) {
       return provider ? `${provider} invalid JSON` : "Invalid JSON";
     }
+    if (/401|unauthor|invalid.?key|no auth/i.test(detail)) {
+      return provider ? `${provider} rejected the API key` : "Provider rejected the API key";
+    }
     return provider ? `${provider}: ${detail}` : part;
   };
 
-  if (parts.length > 0 && /Venice|OpenRouter|Lovable/i.test(msg)) {
+  if (parts.length > 0 && /Venice|OpenRouter/i.test(msg)) {
     return parts.map(clarify).join("; ");
   }
 
-  if (/429|rate.?limit/i.test(msg)) return "Venice rate-limited; try again in a moment.";
+  if (/429|rate.?limit/i.test(msg)) return "Rate-limited; try again in a moment, or add your own OpenRouter key.";
   return msg;
 }
 

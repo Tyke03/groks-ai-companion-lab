@@ -17,6 +17,8 @@ import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
 import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
+import { withAiKey } from "@/lib/aiKey";
+import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { formatSlotContext, mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
 import { filledUniqueKeys, preserveOverlappingVariables } from "@/lib/promptVariableSwitch";
@@ -211,14 +213,14 @@ export const PromptBuilder = () => {
     setGeneratingVar(varName);
     try {
       const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: {
+        body: withAiKey({
           action: "generate-prompt-variable",
           variableName: varName,
           variableDescription: varDef?.description || "",
           templateContext: selectedTemplate.template,
           existingVariables: variables,
           rawContext: rawContext.trim() || undefined,
-        },
+        }),
       });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error) {
@@ -241,7 +243,7 @@ export const PromptBuilder = () => {
     setGeneratingAll(true);
     try {
       const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: {
+        body: withAiKey({
           action: "generate-all-prompt-variables",
           templateId: selectedTemplate.id,
           templateName: selectedTemplate.name,
@@ -254,7 +256,7 @@ export const PromptBuilder = () => {
           })),
           existingVariables: variables,
           rawContext: rawContext.trim() || undefined,
-        },
+        }),
       });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error && !data?.result) {
@@ -377,11 +379,12 @@ export const PromptBuilder = () => {
           <WifiOff className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="text-sm">
             <p className="font-medium neon-callout">AI backend unavailable</p>
-            <p>Fill example values, edit fields, populate from card JSON, and copy — all work offline. AI generation stays disabled.</p>
+            <p>Fill example values, edit fields, populate from card JSON, and copy — all work offline. Add your own OpenRouter key below to turn AI generation on.</p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
         </div>
       )}
+      {(aiUnavailable || ai.hasByok) && <AiKeySettings onChange={ai.refresh} requestContext="Prompt Builder" />}
 
       <div className="space-y-4">
         <span id="prompt-template-label" className="block text-sm font-medium text-foreground">Select Template</span>

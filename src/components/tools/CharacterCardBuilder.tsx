@@ -49,6 +49,8 @@ import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBrid
 import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { RefinePopover } from "@/components/tools/RefinePopover";
 import { formatLlmCascadeError } from "@/lib/llmErrors";
+import { withAiKey } from "@/lib/aiKey";
+import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { convertImageFileToPng, deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
 import { isLorebookBoundToCard, loadLorebook, lorebookHasContent, toCharacterBook } from "@/lib/lorebookStorage";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
@@ -614,7 +616,7 @@ export const CharacterCardBuilder = () => {
         body.refinementNotes = refinementNotes;
         body.currentValue = fieldCurrentValue(card[fieldName]);
       }
-      const { data, error } = await supabase.functions.invoke("venice-ai", { body });
+      const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error) {
         toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
@@ -671,7 +673,7 @@ export const CharacterCardBuilder = () => {
         specVersion,
       };
       if (useRefine) body.refinementNotes = refinementNotes;
-      const { data, error } = await supabase.functions.invoke("venice-ai", { body });
+      const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error && !data?.result) {
         toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
@@ -895,7 +897,8 @@ export const CharacterCardBuilder = () => {
           <div className="text-sm">
             <p className="font-medium neon-callout">AI backend unavailable</p>
             <p className="text-muted-foreground">
-              Manual editing, import, JSON export, and PNG embedding still work. AI generation buttons are disabled until the backend is reachable again.
+              Manual editing, import, JSON export, and PNG embedding still work. Add your own OpenRouter key
+              under Generation settings (the ⚙ button) to turn AI generation on, or try again later.
             </p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
@@ -1075,18 +1078,7 @@ export const CharacterCardBuilder = () => {
       </div>
 
       {showGenerationSettings && (
-        <div className="rounded-lg border border-border bg-secondary/40 p-4">
-          <div className="flex items-center gap-2">
-            <Settings2 className="h-4 w-4 text-primary" />
-            <p className="text-sm font-medium text-foreground">AI generation settings</p>
-          </div>
-          <p className="mt-2 neon-callout text-xs" role="note">
-            Generation uses the app default path when a backend is configured. Custom OpenRouter / BYOK key entry is not available in this experiment - we do not collect API keys here.
-          </p>
-          <p className="mt-2 neon-callout text-xs" role="note">
-            You can still edit every field manually and export cards locally.
-          </p>
-        </div>
+        <AiKeySettings onChange={ai.refresh} requestContext="Character Card Builder" />
       )}
 
       {/* Fields */}

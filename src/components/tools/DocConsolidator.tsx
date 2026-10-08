@@ -7,6 +7,8 @@ import { PlatformCombobox } from "@/components/tools/PlatformCombobox";
 import { chatbots } from "@/data/chatbots";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
+import { withAiKey } from "@/lib/aiKey";
+import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { WorkbenchCardPicker, NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -217,11 +219,11 @@ export const DocConsolidator = () => {
     try {
       const { data, error } = await withTimeout(
         supabase.functions.invoke("venice-ai", {
-          body: {
+          body: withAiKey({
             action: "consolidate",
             serviceName: effectiveName,
             text: inputText,
-          },
+          }),
         }),
         AI_TIMEOUT_MS,
         "AI consolidate",
@@ -345,6 +347,7 @@ export const DocConsolidator = () => {
           </div>
         </div>
       )}
+      {(aiUnavailable || ai.hasByok) && <AiKeySettings onChange={ai.refresh} requestContext="Doc Consolidator" />}
 
       <div className="space-y-4">
         <div>

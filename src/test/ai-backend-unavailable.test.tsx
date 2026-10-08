@@ -12,7 +12,7 @@ vi.mock("@/integrations/supabase/client", () => ({
       invoke: vi.fn().mockResolvedValue({
         data: {
           ok: false,
-          reason: "No provider API key is configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY).",
+          reason: "No server AI provider key is configured (VENICE_API_KEY or OPENROUTER_API_KEY).",
         },
         error: null,
       }),
@@ -29,6 +29,8 @@ describe("AI backend reports unhealthy", () => {
     render(<MemoryRouter><DocConsolidator /></MemoryRouter>);
     expect(screen.getByText("Documentation Consolidator")).toBeInTheDocument();
     expect(await screen.findByText(/Mode: Offline only \(AI unavailable\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/No provider API key is configured/i)).toBeInTheDocument();
+    expect(screen.getByText(/No server AI provider key is configured/i)).toBeInTheDocument();
+    // The BYOK path is offered when AI is unavailable.
+    expect(screen.getByTestId("ai-key-settings")).toBeInTheDocument();
   });
 });

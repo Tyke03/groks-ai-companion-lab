@@ -740,16 +740,19 @@ function looksLikeTruncatedCardJson(raw: string): boolean {
 /**
  * Provider cascade that only accepts parseable whole-card JSON.
  * Venice often returns truncated/invalid JSON; treat that as a soft failure and fall through.
+ * A per-request BYOK OpenRouter key (openrouterKeyOverride) is used when present and never stored.
  */
 async function callLLMForWholeCard(
   systemPrompt: string,
   userPrompt: string,
   maxTokens = CARD_JSON_MAX_TOKENS,
   temperature = 0.7,
+  models?: { venice?: string; openrouter?: string },
+  openrouterKeyOverride?: string,
 ): Promise<{ content: string; provider: string; card: Record<string, unknown> }> {
+  const override = (openrouterKeyOverride || '').trim();
   const veniceKey = Deno.env.get('VENICE_API_KEY');
-  const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
-  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  const openrouterKey = override || Deno.env.get('OPENROUTER_API_KEY');
   const failures: string[] = [];
 
   const accept = (content: string, provider: string) => {
@@ -765,12 +768,12 @@ async function callLLMForWholeCard(
     throw new Error(`${why} (${content?.length || 0} chars)`);
   };
 
-  if (veniceKey) {
+  if (veniceKey && !override) {
     for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
       try {
         const content = await callVeniceStreaming(
           veniceKey,
-          VENICE_CARD_MODEL,
+          models?.venice || VENICE_CARD_MODEL,
           systemPrompt,
           userPrompt,
           maxTokens,
@@ -790,47 +793,31 @@ async function callLLMForWholeCard(
   }
 
   if (openrouterKey) {
-    try {
-      const content = await callProvider(
-        'https://openrouter.ai/api/v1/chat/completions',
-        openrouterKey,
-        OPENROUTER_CARD_MODEL,
-        systemPrompt,
-        userPrompt,
-        maxTokens,
-        temperature,
-        false,
-      );
-      return accept(content, 'openrouter');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error('OpenRouter card failed:', msg);
-      failures.push(clarifyFailure('OpenRouter', msg));
-    }
-  }
-
-  if (lovableKey) {
-    try {
-      const content = await callProvider(
-        'https://ai.gateway.lovable.dev/v1/chat/completions',
-        lovableKey,
-        'google/gemini-2.5-flash',
-        systemPrompt,
-        userPrompt,
-        maxTokens,
-        temperature,
-        false,
-      );
-      return accept(content, 'lovable');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error('Lovable card failed:', msg);
-      failures.push(clarifyFailure('Lovable', msg));
+    for (const model of openrouterModelsFor(models?.openrouter)) {
+      try {
+        const content = await callProvider(
+          'https://openrouter.ai/api/v1/chat/completions',
+          openrouterKey,
+          model,
+          systemPrompt,
+          userPrompt,
+          maxTokens,
+          temperature,
+          false,
+          undefined,
+          OPENROUTER_HEADERS,
+        );
+        return accept(content, 'openrouter');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`OpenRouter card failed (${model}):`, msg);
+        failures.push(clarifyFailure('OpenRouter', msg));
+      }
     }
   }
 
   if (failures.length === 0) {
-    throw new Error('No API keys configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY)');
+    throw new Error('No API keys configured (VENICE_API_KEY or OPENROUTER_API_KEY).');
   }
   throw new Error(formatCascadeFailure('whole-card', failures));
 }
@@ -961,15 +948,47 @@ function collectContextParts(existingFields: Record<string, unknown> | null | un
 
 // Card-authoring models: prefer strong general instruct (GLM/Qwen), not RP/uncensored Venice personas.
 // Venice whole-card uses streaming: wait while chunks arrive; abort only on stall/hung or wall clock.
-// include_venice_system_prompt stays false. OpenRouter fallback: current free Gemma 4 instruct.
+// include_venice_system_prompt stays false. OpenRouter fallback: free instruct models, in order.
 const VENICE_CARD_MODEL = 'qwen-3-6-plus';
 const OPENROUTER_CARD_MODEL = 'google/gemma-4-31b-it:free';
+/**
+ * OpenRouter free instruct models, tried in order. An explicit model (BYOK or
+ * callLLM override) is tried first; these are the shared-key fallbacks.
+ */
+const OPENROUTER_FALLBACK_MODELS = [
+  'google/gemma-4-31b-it:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-235b-a22b:free',
+];
 /** No chunk for this long => hung (not a blunt hard kill while tokens are flowing). */
 const VENICE_STALL_MS = 20_000;
 /** Absolute ceiling even if chunks keep arriving (edge-friendly). */
 const VENICE_MAX_WALL_MS = 110_000;
-/** One Venice retry after stall/hung/429/connection death, then OpenRouter -> Lovable. */
+/** One Venice retry after stall/hung/429/connection death, then OpenRouter. */
 const VENICE_MAX_ATTEMPTS = 2;
+/** Per-request BYOK OpenRouter key override (never logged, never stored). */
+function openrouterOverrideFrom(body: unknown): string {
+  if (!body || typeof body !== 'object') return '';
+  const value = (body as Record<string, unknown>).openrouterKey;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** OpenRouter attribution headers (recommended by OpenRouter for free-tier usage). */
+const OPENROUTER_HEADERS: Record<string, string> = {
+  'HTTP-Referer': 'https://www.companionhub.app',
+  'X-Title': 'AI Companion Hub',
+};
+
+/** OpenRouter model list: explicit model first, then shared free fallbacks. */
+function openrouterModelsFor(explicit?: string): string[] {
+  const list: string[] = [];
+  const first = (explicit || '').trim();
+  if (first) list.push(first);
+  for (const model of OPENROUTER_FALLBACK_MODELS) {
+    if (!list.includes(model)) list.push(model);
+  }
+  return list;
+}
 /** Short backoff between Venice retries (429 / transient). */
 const VENICE_RETRY_BASE_MS = 700;
 
@@ -1011,14 +1030,22 @@ function trimRawContext(raw: unknown, max = RAW_CONTEXT_MAX_CHARS): string {
   return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
-async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CARD_JSON_MAX_TOKENS, temperature = 0.3, models?: { venice?: string; openrouter?: string }) {
+async function callLLM(
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens = CARD_JSON_MAX_TOKENS,
+  temperature = 0.3,
+  models?: { venice?: string; openrouter?: string },
+  openrouterKeyOverride?: string,
+) {
+  const override = (openrouterKeyOverride || '').trim();
   const veniceKey = Deno.env.get('VENICE_API_KEY');
-  const openrouterKey = Deno.env.get('OPENROUTER_API_KEY');
-  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  const openrouterKey = override || Deno.env.get('OPENROUTER_API_KEY');
   const failures: string[] = [];
 
-  // Venice first: stream-aware (extend while active; abort on stall / wall / disconnect)
-  if (veniceKey) {
+  // Venice first: stream-aware (extend while active; abort on stall / wall / disconnect).
+  // Skipped when an explicit BYOK key is supplied for this request.
+  if (veniceKey && !override) {
     for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
       try {
         const content = await callVeniceStreaming(
@@ -1045,50 +1072,33 @@ async function callLLM(systemPrompt: string, userPrompt: string, maxTokens = CAR
     }
   }
 
-  // Fallback to OpenRouter
+  // Fallback to OpenRouter (explicit model first, then shared free instruct models).
   if (openrouterKey) {
-    try {
-      const content = await callProvider(
-        'https://openrouter.ai/api/v1/chat/completions',
-        openrouterKey,
-        models?.openrouter || OPENROUTER_CARD_MODEL,
-        systemPrompt,
-        userPrompt,
-        maxTokens,
-        temperature,
-        false,
-      );
-      return { content, provider: 'openrouter' };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error('OpenRouter failed:', msg);
-      failures.push(clarifyFailure('OpenRouter', msg));
-    }
-  }
-
-  // Final fallback: Lovable AI Gateway
-  if (lovableKey) {
-    try {
-      const content = await callProvider(
-        'https://ai.gateway.lovable.dev/v1/chat/completions',
-        lovableKey,
-        'google/gemini-2.5-flash',
-        systemPrompt,
-        userPrompt,
-        maxTokens,
-        temperature,
-        false,
-      );
-      return { content, provider: 'lovable' };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error('Lovable AI Gateway failed:', msg);
-      failures.push(clarifyFailure('Lovable', msg));
+    for (const model of openrouterModelsFor(models?.openrouter)) {
+      try {
+        const content = await callProvider(
+          'https://openrouter.ai/api/v1/chat/completions',
+          openrouterKey,
+          model,
+          systemPrompt,
+          userPrompt,
+          maxTokens,
+          temperature,
+          false,
+          undefined,
+          OPENROUTER_HEADERS,
+        );
+        return { content, provider: 'openrouter' };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`OpenRouter failed (${model}):`, msg);
+        failures.push(clarifyFailure('OpenRouter', msg));
+      }
     }
   }
 
   if (failures.length === 0) {
-    throw new Error('No API keys configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY)');
+    throw new Error('No API keys configured (VENICE_API_KEY or OPENROUTER_API_KEY).');
   }
   throw new Error(formatCascadeFailure('generic', failures));
 }
@@ -1258,6 +1268,7 @@ async function callProvider(
   temperature: number,
   isVenice = false,
   timeoutMs?: number,
+  extraHeaders?: Record<string, string>,
 ) {
   const payload: Record<string, unknown> = {
     model,
@@ -1281,6 +1292,7 @@ async function callProvider(
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(extraHeaders || {}),
       },
       body: JSON.stringify(payload),
       signal: controller?.signal,
@@ -1316,18 +1328,24 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const { action } = body;
+    // Optional per-request visitor key (BYOK). Never logged or persisted.
+    const byokOverride = openrouterOverrideFrom(body);
+    const byokModel = typeof body?.openrouterModel === 'string' ? body.openrouterModel.trim() : '';
+    // Explicit model preference for this request (BYOK model wins over shared defaults).
+    const byokModels = byokModel ? { openrouter: byokModel } : undefined;
 
     // === HEALTH CHECK ===
     if (action === 'health') {
-      // Never report healthy unless at least one provider key is configured.
+      // Never report healthy unless at least one server provider key is configured.
       // A configured key is still not a guarantee it is valid, but reporting
       // healthy with no key would enable AI buttons that are guaranteed to fail.
+      // Client-side BYOK (a visitor's own key) is handled separately by the UI.
       const hasProviderKey = Boolean(
-        Deno.env.get('VENICE_API_KEY') || Deno.env.get('OPENROUTER_API_KEY') || Deno.env.get('LOVABLE_API_KEY'),
+        Deno.env.get('VENICE_API_KEY') || Deno.env.get('OPENROUTER_API_KEY'),
       );
       const payload = hasProviderKey
         ? { ok: true }
-        : { ok: false, reason: 'No provider API key is configured (VENICE_API_KEY, OPENROUTER_API_KEY, or LOVABLE_API_KEY).' };
+        : { ok: false, reason: 'No server AI provider key is configured (VENICE_API_KEY or OPENROUTER_API_KEY).' };
       return new Response(JSON.stringify(payload), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -1408,7 +1426,7 @@ Format with clear markdown headings, bullet points, and code blocks. Be comprehe
 Documentation:
 ${text}`;
 
-      const { content: result, provider } = await callLLM('You are a technical documentation specialist. Consolidate raw documentation into clean, structured markdown.', prompt);
+      const { content: result, provider } = await callLLM('You are a technical documentation specialist. Consolidate raw documentation into clean, structured markdown.', prompt, undefined, undefined, byokModels, byokOverride);
       const trimmed = typeof result === 'string' ? result.trim() : '';
       if (!trimmed) {
         return new Response(JSON.stringify({ error: 'AI returned an empty result' }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -1443,7 +1461,7 @@ You are an expert Character Card field editor for SillyTavern CCV2/V3.
 Revise ONLY the requested field draft per the creator critique. Critique overrides conflicting draft; MUST actively modify; do not copy draft unchanged when notes conflict.
 Write ONLY the revised field text. No JSON, no markdown fences, no commentary.
 Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt.`;
-        const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
+        const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7, byokModels, byokOverride);
         let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
         if (typeof fieldValue === 'string') {
           fieldValue = stripThinkingBlocks(fieldValue);
@@ -1462,7 +1480,7 @@ Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt
 You are an expert Character Card field author for SillyTavern CCV2/V3.
 Write ONLY the requested field text. No JSON, no markdown fences, no commentary.
 Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt.`;
-      const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7);
+      const { content: raw, provider } = await callLLM(singleSystem, prompt, maxTok, 0.7, byokModels, byokOverride);
       let fieldValue: unknown = typeof raw === 'string' ? raw.trim() : '';
       if (typeof fieldValue === 'string') {
         fieldValue = stripThinkingBlocks(fieldValue);
@@ -1489,7 +1507,7 @@ Follow Voice Anchor + POV + relational phrasing + macro rules in the user prompt
         prompt += `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
       }
 
-      const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7);
+      const { content: result, provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, CARD_JSON_MAX_TOKENS, 0.7, byokModels, byokOverride);
 
       const flatHubCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
       return new Response(JSON.stringify({ result: flatHubCard, provider, ...(useRefine ? { refined: true } : {}) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -1536,7 +1554,7 @@ Return ONLY the JSON object, no explanation.`;
 
       const { content: rawResult, provider } = await callLLM(
         'You are a character card format conversion expert. You can parse any character format and convert to V2/V3 spec. You NEVER discard information. Respond with valid JSON only.',
-        prompt, 4096, 0.3
+        prompt, 4096, 0.3, byokModels, byokOverride
       );
 
       const cleaned = stripThinkingBlocks(rawResult);
@@ -1578,7 +1596,8 @@ Write ONLY the variable value — no labels, no quotes around it, no explanation
         prompt,
         PROMPT_VAR_MAX_TOKENS,
         0.8,
-        { venice: VENICE_PROMPT_MODEL, openrouter: OPENROUTER_PROMPT_MODEL },
+        { venice: VENICE_PROMPT_MODEL, openrouter: byokModel || OPENROUTER_PROMPT_MODEL },
+        byokOverride,
       );
 
       const cleaned = stripThinkingBlocks(result).trim();
@@ -1632,7 +1651,8 @@ Generate ALL variables listed above. Every variable must have a value. Stay cons
         prompt,
         PROMPT_ALL_VARS_MAX_TOKENS,
         0.8,
-        { venice: VENICE_PROMPT_MODEL, openrouter: OPENROUTER_PROMPT_MODEL },
+        { venice: VENICE_PROMPT_MODEL, openrouter: byokModel || OPENROUTER_PROMPT_MODEL },
+        byokOverride,
       );
 
       const cleaned = stripThinkingBlocks(result);

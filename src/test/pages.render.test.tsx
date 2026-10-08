@@ -180,7 +180,7 @@ describe("Tools", () => {
   it("defaults to Character Card Builder and keeps working tabs", () => {
     renderPage(<Tools />);
     expect(screen.getByRole("heading", { name: "Local workbench" })).toBeInTheDocument();
-    expect(screen.getByText("No credential collection")).toBeInTheDocument();
+    expect(screen.getByText("Keys stay in your browser")).toBeInTheDocument();
 
     // Character Card Builder is the default selected tool; Lorebook is a first-class tab
     expect(screen.getByRole("tab", { name: /Lorebook Builder/i })).toBeInTheDocument();

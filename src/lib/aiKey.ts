@@ -17,7 +17,7 @@ export const DEFAULT_OPENROUTER_MODEL = "google/gemma-4-31b-it:free";
 export const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";
 
 /** Where visitors can ask us for access instead of using their own key. */
-export const REQUEST_ACCESS_EMAIL = "hello@companionhub.app";
+export const REQUEST_ACCESS_EMAIL = "companionhub.winter821@aleeas.com";
 export const REQUEST_ACCESS_SUBJECT = "AI access request — companionhub.app";
 
 export interface StoredAiKey {

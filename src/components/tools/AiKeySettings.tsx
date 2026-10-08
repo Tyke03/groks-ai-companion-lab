@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { KeyRound, ExternalLink, Check, Trash2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { KeyRound, ExternalLink, Check, Trash2, Send } from "lucide-react";
 import {
   DEFAULT_OPENROUTER_MODEL,
   HOW_TO_GET_KEY_STEPS,
@@ -11,6 +12,7 @@ import {
   maskKey,
   requestAccessHref,
   saveAiKey,
+  sendAccessRequest,
 } from "@/lib/aiKey";
 
 interface AiKeySettingsProps {
@@ -31,6 +33,26 @@ export function AiKeySettings({ onChange, requestContext }: AiKeySettingsProps) 
   const [model, setModel] = useState(initial.model || DEFAULT_OPENROUTER_MODEL);
   const [savedKey, setSavedKey] = useState(initial.key);
   const [showKey, setShowKey] = useState(false);
+  const [showRequest, setShowRequest] = useState(false);
+  const [requestName, setRequestName] = useState("");
+  const [requestContact, setRequestContact] = useState("");
+  const [requestNote, setRequestNote] = useState("");
+  const [requestState, setRequestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+
+  const handleSendRequest = async () => {
+    setRequestState("sending");
+    try {
+      const result = await sendAccessRequest({
+        name: requestName,
+        contact: requestContact,
+        note: requestNote,
+        context: requestContext,
+      });
+      setRequestState(result.ok ? "sent" : "error");
+    } catch {
+      setRequestState("error");
+    }
+  };
 
   const handleSave = () => {
     const next = saveAiKey({ key, model });
@@ -132,11 +154,71 @@ export function AiKeySettings({ onChange, requestContext }: AiKeySettingsProps) 
 
       <p className="text-xs text-muted-foreground">
         Don't want to use a key?{" "}
+        <button
+          type="button"
+          className="text-primary hover:underline"
+          onClick={() => setShowRequest((v) => !v)}
+          aria-expanded={showRequest}
+        >
+          {showRequest ? "Hide request form" : "Request access"}
+        </button>{" "}
+        and we'll get you set up case by case. You can also{" "}
         <a href={requestAccessHref(requestContext)} className="text-primary hover:underline">
-          Request access
-        </a>{" "}
-        and we'll get you set up case by case.
+          email us
+        </a>
+        .
       </p>
+
+      {showRequest && (
+        <div className="space-y-2 rounded-lg border border-border bg-secondary/40 p-3" data-testid="ai-access-request">
+          {requestState === "sent" ? (
+            <p className="text-xs text-emerald-400" role="status">
+              Request sent. We'll reply to the contact you gave.
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-2 md:grid-cols-2">
+                <Input
+                  aria-label="Your name"
+                  placeholder="Your name"
+                  value={requestName}
+                  onChange={(event) => setRequestName(event.target.value)}
+                  className="bg-secondary text-sm"
+                />
+                <Input
+                  aria-label="Email or contact"
+                  placeholder="Email or contact"
+                  value={requestContact}
+                  onChange={(event) => setRequestContact(event.target.value)}
+                  className="bg-secondary text-sm"
+                />
+              </div>
+              <Textarea
+                aria-label="What you're working on"
+                placeholder="What are you working on?"
+                value={requestNote}
+                onChange={(event) => setRequestNote(event.target.value)}
+                className="bg-secondary text-sm"
+                rows={2}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSendRequest}
+                  disabled={requestState === "sending" || (!requestContact.trim() && !requestName.trim())}
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {requestState === "sending" ? "Sending..." : "Send request"}
+                </Button>
+                {requestState === "error" && (
+                  <span className="text-xs text-amber-400">Couldn't send here — opening your mail app instead.</span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

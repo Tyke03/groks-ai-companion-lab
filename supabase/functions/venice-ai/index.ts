@@ -737,235 +737,41 @@ function looksLikeTruncatedCardJson(raw: string): boolean {
   return false;
 }
 
+type LlmModels = { oneprovider?: string; openrouter?: string };
+
+const CARD_JSON_MAX_TOKENS = 4096;
+/** Prompt Builder var gen: smaller completions than whole-card JSON (do not inherit CARD_JSON_MAX_TOKENS). */
+const PROMPT_VAR_MAX_TOKENS = 512;
+const PROMPT_ALL_VARS_MAX_TOKENS = 2048;
+/** Deno/safety ceiling only — not a light-tool throttle. Full card + prompt instructions allowed. */
+const RAW_CONTEXT_MAX_CHARS = 120_000;
+/** Per-model fetch timeout so a hung gateway cannot burn the whole edge budget. */
+const PROVIDER_TIMEOUT_MS = 40_000;
+
 /**
- * Provider cascade that only accepts parseable whole-card JSON.
- * Venice often returns truncated/invalid JSON; treat that as a soft failure and fall through.
- * A per-request BYOK OpenRouter key (openrouterKeyOverride) is used when present and never stored.
+ * Cascade: OneProvider first, then OpenRouter.
+ * OneProvider's catalog is commercial (no dedicated uncensored SKUs) — Grok is the least-filtered option there.
+ * OpenRouter carries Venice Uncensored plus other permissive RP models. Cascade is provider/model failure,
+ * not content refusal. BYOK OpenRouter key (openrouterKeyOverride) is used when present and never stored.
  */
-async function callLLMForWholeCard(
-  systemPrompt: string,
-  userPrompt: string,
-  maxTokens = CARD_JSON_MAX_TOKENS,
-  temperature = 0.7,
-  models?: { venice?: string; openrouter?: string },
-  openrouterKeyOverride?: string,
-): Promise<{ content: string; provider: string; card: Record<string, unknown> }> {
-  const override = (openrouterKeyOverride || '').trim();
-  const veniceKey = Deno.env.get('VENICE_API_KEY');
-  const openrouterKey = override || Deno.env.get('OPENROUTER_API_KEY');
-  const failures: string[] = [];
-
-  const accept = (content: string, provider: string) => {
-    if (!content || !String(content).trim()) {
-      throw new Error('returned empty (0 chars)');
-    }
-    const { card, parseError } = parseWholeCardJson(content);
-    if (!parseError && card) {
-      const flat = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
-      return { content, provider, card: flat };
-    }
-    const why = looksLikeTruncatedCardJson(content) ? 'truncated/incomplete JSON' : 'invalid JSON';
-    throw new Error(`${why} (${content?.length || 0} chars)`);
-  };
-
-  if (veniceKey && !override) {
-    for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
-      try {
-        const content = await callVeniceStreaming(
-          veniceKey,
-          models?.venice || VENICE_CARD_MODEL,
-          systemPrompt,
-          userPrompt,
-          maxTokens,
-          temperature,
-        );
-        return accept(content, 'venice');
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Venice card attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
-        failures.push(clarifyFailure('Venice', msg));
-        if (!isVeniceRetryable(msg) || attempt >= VENICE_MAX_ATTEMPTS) break;
-        const backoff = VENICE_RETRY_BASE_MS * attempt;
-        console.log(`Venice card retry backoff ${backoff}ms after:`, msg);
-        await sleepMs(backoff);
-      }
-    }
-  }
-
-  if (openrouterKey) {
-    for (const model of openrouterModelsFor(models?.openrouter)) {
-      try {
-        const content = await callProvider(
-          'https://openrouter.ai/api/v1/chat/completions',
-          openrouterKey,
-          model,
-          systemPrompt,
-          userPrompt,
-          maxTokens,
-          temperature,
-          false,
-          undefined,
-          OPENROUTER_HEADERS,
-        );
-        return accept(content, 'openrouter');
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`OpenRouter card failed (${model}):`, msg);
-        failures.push(clarifyFailure('OpenRouter', msg));
-      }
-    }
-  }
-
-  if (failures.length === 0) {
-    throw new Error('No API keys configured (VENICE_API_KEY or OPENROUTER_API_KEY).');
-  }
-  throw new Error(formatCascadeFailure('whole-card', failures));
-}
-
-function extractCardField(card: Record<string, unknown>, fieldName: string): unknown {
-  if (!card || typeof card !== 'object') return undefined;
-  if (fieldName in card) return card[fieldName];
-  const data = card.data;
-  if (data && typeof data === 'object' && !Array.isArray(data) && fieldName in (data as Record<string, unknown>)) {
-    return (data as Record<string, unknown>)[fieldName];
-  }
-  return undefined;
-}
-
-function buildWholeCardUserPrompt(existingFields: Record<string, unknown> | null | undefined, isV3: boolean): string {
-  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
-  const contextBlock = contextParts.length > 0
-    ? `LABELED CURRENT CARD TEXT (ingest ALL of it - even messy / wrong boxes / overflow. Reorganize into proper fields):\n${contextParts.join('\n\n')}`
-    : 'No fields filled - create a completely original character from scratch.';
-
-  return `${CARD_FIELD_BIBLE}
-
-${FIELD_POV_CONTRACT}
-
-${VOICE_ANCHOR_RULES}
-
-${RELATIONAL_PHRASING_RULES}
-
-${MES_EXAMPLE_FORMAT_RULES}
-
-TASK: Build a COMPLETE proper Character Card as a single FLAT JSON object (SillyTavern CCV2/V3 Hub keys — NOT a foreign playground envelope).
-
-This is the ONLY valid response shape (fill every key; use "" or [] when empty):
-${RESPONSE_SCHEMA_TEMPLATE}
-
-${contextBlock}
-
-REASONING ORDER: flesh out name -> description -> personality -> scenario -> first_mes -> mes_example -> alternate_greetings -> group_only_greetings -> creator_notes -> tags -> nickname/source/creator/version -> post_history_instructions -> system_prompt LAST (most inferential instructions for the chat model given the finished card).
-
-OUTPUT RULES (STRICT — Hub Gen All / import expect ONLY this flat schema):
-- Respond with VALID JSON ONLY (no markdown fences, no commentary). ONLY the schema above.
-- FORBIDDEN wrappers / dialects: character_card, spec, spec_version, spec_url, data envelopes, lore as a top-level replacement for fields, book, personality as a JSON array, Name:/Roxy:-style speaker labels.
-- personality MUST be ONE string (comma-separated traits OK). NEVER a JSON array.
-- tags MUST be ONE comma-separated string (Hub UI). V3 export may later split tags; Gen All still returns a string.
-- first_mes must be a SINGLE opening message for {{char}} — never multi-<START> dialogue dumps.
-- mes_example must be a single string with real newlines and exactly three <START> blocks; use {{user}}:/{{char}}: labels only — NEVER real character name labels, never User:.
-- alternate_greetings must be an array of exactly 3 strings (each a full opener like first_mes).
-- group_only_greetings must be an array (1-3 strings preferred; [] if not useful).
-- source must be an array of strings (or []).
-- Respect length budgets so Gen All does not blow limits.
-- Personality = {{char}} traits only. Never {{user}} first-person in personality/description/etc.
-- system_prompt = instructions FOR the chat model, not mid-scene RP.
-${isV3 ? '- V3 note: keep source / group_only_greetings / alternate_greetings as arrays; tags still a string in this Hub response.' : '- V2-flat: same schema; include group_only_greetings as an array when useful; otherwise [].'}`;
-}
-
-/** Compact body of skills/character-card-studio/SKILL.md -- keep in sync with that file. */
-const CHARACTER_CARD_STUDIO_SKILL_RULES = `CHARACTER CARD STUDIO SKILL (Hub Gen / Refine):
-
-MACROS
-- Lowercase {{user}} / {{char}} only. Possessives: {{user}}'s / {{char}}'s (never {{User's}} / {{user's}}).
-- Ban "The User" / "the user" as nouns -- use {{user}}. Ban User:/Name: speaker labels.
-
-POV
-- description / personality / scenario: 3rd-person authorial about {{char}}.
-- first_mes: in-character opener as {{char}}.
-- mes_example: {{user}}:/{{char}}: with 3-block Public->Private->High-stakes progression (not three hellos).
-- system_prompt: 2nd-person meta directives for the chat model (not mid-scene RP).
-
-RELATIONAL PHRASING
-- Correct: "{{char}} is {{user}}'s younger sister" / "{{char}} is the younger sister of {{user}}".
-- Banned: "the user's sister", bare "the user", "your sister", "X, the user's Y, is...".
-
-REFINE DELTA RULE
-- Creator critique / notes OVERRIDE conflicting draft text.
-- MUST actively modify the draft to satisfy the critique; never copy the draft unchanged when notes conflict.
-- Preserve only parts that do NOT conflict with the notes (identity/voice/format when still valid).
-`;
-
-const CARD_AUTHOR_SYSTEM = `${CHARACTER_CARD_STUDIO_SKILL_RULES}\n\n${RELATIONAL_PHRASING_RULES}\n\nYou are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3) for the AI Companion Hub Gen All pipeline.
-You reorganize and enrich incomplete cards into ONE flat JSON object matching the Hub RESPONSE SCHEMA exactly (keys listed in the user prompt blank template).
-You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt.
-ALWAYS respond with valid JSON only — no markdown, no explanation.
-
-VOICE ANCHOR (mandatory across the card): Dynamic ({{char}} vs {{user}} vs world) + Speech quirks + mes_example 3-block progression (Public/Casual → Private/Core → High stakes/Vulnerability). Embed in the same whole-card output — no separate phase.
-
-POV: profile fields = 3rd-person authorial; first_mes = IC opening; mes_example = {{user}}/{{char}}; system_prompt = 2nd-person meta directives for the chat model.
-
-MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}/{{user's}}; ban The User / the user; ban User:/Name: labels. Follow RELATIONAL PHRASING ({{char}} is {{user}}'s ... -- never the banned patterns).
-
-OUTPUT RULES (non-negotiable):
-- ONLY the Hub flat schema. Fill every key; use "" or [] when empty.
-- FORBIDDEN: character_card wrappers, spec / spec_version / spec_url, nested data-only envelopes as the sole payload, lore as a top-level field replacing card fields, personality as a JSON array, real-name speaker labels (e.g. Roxy:), User: labels.
-- personality = ONE string. first_mes = one opening (not multi-<START>). mes_example uses {{user}}/{{char}} only with three progression blocks — not three hellos.`;
-
-
-
-function formatExistingFieldValue(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const t = value.trim();
-    return t ? t : null;
-  }
-  if (Array.isArray(value)) {
-    const parts = value.map((v) => String(v).trim()).filter(Boolean);
-    return parts.length ? parts.join('\n') : null;
-  }
-  return null;
-}
-
-function collectContextParts(existingFields: Record<string, unknown> | null | undefined, fieldOrder?: string[]): string[] {
-  const contextParts: string[] = [];
-  if (!existingFields || typeof existingFields !== 'object') return contextParts;
-  const keys = fieldOrder && fieldOrder.length
-    ? fieldOrder
-    : Object.keys(existingFields);
-  for (const key of keys) {
-    const formatted = formatExistingFieldValue(existingFields[key]);
-    if (formatted) contextParts.push(`${key}: ${formatted}`);
-  }
-  if (fieldOrder) {
-    for (const [key, value] of Object.entries(existingFields)) {
-      if (fieldOrder.includes(key)) continue;
-      const formatted = formatExistingFieldValue(value);
-      if (formatted) contextParts.push(`${key}: ${formatted}`);
-    }
-  }
-  return contextParts;
-}
-
-// Card-authoring models: prefer strong general instruct (GLM/Qwen), not RP/uncensored Venice personas.
-// Venice whole-card uses streaming: wait while chunks arrive; abort only on stall/hung or wall clock.
-// include_venice_system_prompt stays false. OpenRouter fallback: free instruct models, in order.
-const VENICE_CARD_MODEL = 'qwen-3-6-plus';
-const OPENROUTER_CARD_MODEL = 'google/gemma-4-31b-it:free';
-/**
- * OpenRouter free instruct models, tried in order. An explicit model (BYOK or
- * callLLM override) is tried first; these are the shared-key fallbacks.
- */
-const OPENROUTER_FALLBACK_MODELS = [
-  'google/gemma-4-31b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'qwen/qwen3-235b-a22b:free',
+const ONEPROVIDER_CARD_MODEL = 'grok-4.7';
+const OPENROUTER_CARD_MODEL = 'cognitivecomputations/dolphin-mistral-24b-venice-edition';
+const ONEPROVIDER_FALLBACK_MODELS = [
+  'grok-4.7',
+  'glm-5.3-flash',
 ];
-/** No chunk for this long => hung (not a blunt hard kill while tokens are flowing). */
-const VENICE_STALL_MS = 20_000;
-/** Absolute ceiling even if chunks keep arriving (edge-friendly). */
-const VENICE_MAX_WALL_MS = 110_000;
-/** One Venice retry after stall/hung/429/connection death, then OpenRouter. */
-const VENICE_MAX_ATTEMPTS = 2;
+const OPENROUTER_FALLBACK_MODELS = [
+  'cognitivecomputations/dolphin-mistral-24b-venice-edition',
+  'sao10k/l3.3-euryale-70b',
+  'gryphe/mythomax-l2-13b',
+  'google/gemma-4-31b-it:free',
+];
+const ONEPROVIDER_PROMPT_MODEL = ONEPROVIDER_CARD_MODEL;
+const OPENROUTER_PROMPT_MODEL = OPENROUTER_CARD_MODEL;
+
+const ONEPROVIDER_CHAT_URL = 'https://api.oneprovider.dev/v1/chat/completions';
+const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
 /** Per-request BYOK OpenRouter key override (never logged, never stored). */
 function openrouterOverrideFrom(body: unknown): string {
   if (!body || typeof body !== 'object') return '';
@@ -979,25 +785,22 @@ const OPENROUTER_HEADERS: Record<string, string> = {
   'X-Title': 'AI Companion Hub',
 };
 
-/** OpenRouter model list: explicit model first, then shared free fallbacks. */
-function openrouterModelsFor(explicit?: string): string[] {
+function uniqueModels(explicit: string | undefined, fallbacks: string[]): string[] {
   const list: string[] = [];
   const first = (explicit || '').trim();
   if (first) list.push(first);
-  for (const model of OPENROUTER_FALLBACK_MODELS) {
+  for (const model of fallbacks) {
     if (!list.includes(model)) list.push(model);
   }
   return list;
 }
-/** Short backoff between Venice retries (429 / transient). */
-const VENICE_RETRY_BASE_MS = 700;
 
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function oneproviderModelsFor(explicit?: string): string[] {
+  return uniqueModels(explicit, ONEPROVIDER_FALLBACK_MODELS);
 }
 
-function isVeniceRetryable(msg: string): boolean {
-  return /stall|hung|timeout|wall|network|connection|abort|fetch|5\d\d|429|rate.?limit|truncated|incomplete|invalid JSON|returned empty/i.test(msg);
+function openrouterModelsFor(explicit?: string): string[] {
+  return uniqueModels(explicit, OPENROUTER_FALLBACK_MODELS);
 }
 
 function clarifyFailure(provider: string, msg: string): string {
@@ -1012,15 +815,46 @@ function formatCascadeFailure(kind: 'whole-card' | 'generic', failures: string[]
   if (kind === 'whole-card') return `All LLM providers failed whole-card JSON. ${joined}`;
   return `All LLM providers failed. ${joined}`;
 }
-const CARD_JSON_MAX_TOKENS = 4096;
-/** Prompt Builder var gen: smaller completions than whole-card JSON (do not inherit CARD_JSON_MAX_TOKENS). */
-const PROMPT_VAR_MAX_TOKENS = 512;
-const PROMPT_ALL_VARS_MAX_TOKENS = 2048;
-/** Deno/safety ceiling only — not a light-tool throttle. Full card + prompt instructions allowed. */
-const RAW_CONTEXT_MAX_CHARS = 120_000;
-/** Fast/cheap models for prompt-var path (same flash stack; separate constants so card defaults cannot silently apply). */
-const VENICE_PROMPT_MODEL = VENICE_CARD_MODEL;
-const OPENROUTER_PROMPT_MODEL = OPENROUTER_CARD_MODEL;
+
+type ProviderAttempt = {
+  provider: 'oneprovider' | 'openrouter';
+  model: string;
+  apiKey: string;
+  url: string;
+  extraHeaders?: Record<string, string>;
+};
+
+function providerAttempts(models?: LlmModels, openrouterKeyOverride?: string): ProviderAttempt[] {
+  const override = (openrouterKeyOverride || '').trim();
+  const oneKey = Deno.env.get('ONEPROVIDER_API_KEY');
+  const openrouterKey = override || Deno.env.get('OPENROUTER_API_KEY');
+  const attempts: ProviderAttempt[] = [];
+
+  if (oneKey && !override) {
+    for (const model of oneproviderModelsFor(models?.oneprovider)) {
+      attempts.push({
+        provider: 'oneprovider',
+        model,
+        apiKey: oneKey,
+        url: ONEPROVIDER_CHAT_URL,
+      });
+    }
+  }
+
+  if (openrouterKey) {
+    for (const model of openrouterModelsFor(models?.openrouter)) {
+      attempts.push({
+        provider: 'openrouter',
+        model,
+        apiKey: openrouterKey,
+        url: OPENROUTER_CHAT_URL,
+        extraHeaders: OPENROUTER_HEADERS,
+      });
+    }
+  }
+
+  return attempts;
+}
 
 function trimRawContext(raw: unknown, max = RAW_CONTEXT_MAX_CHARS): string {
   if (typeof raw !== 'string') return '';
@@ -1030,232 +864,97 @@ function trimRawContext(raw: unknown, max = RAW_CONTEXT_MAX_CHARS): string {
   return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
+/**
+ * Provider cascade that only accepts parseable whole-card JSON.
+ * Invalid/truncated JSON is a soft failure and falls through to the next model.
+ * A per-request BYOK OpenRouter key (openrouterKeyOverride) is used when present and never stored.
+ */
+async function callLLMForWholeCard(
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens = CARD_JSON_MAX_TOKENS,
+  temperature = 0.7,
+  models?: LlmModels,
+  openrouterKeyOverride?: string,
+): Promise<{ content: string; provider: string; card: Record<string, unknown> }> {
+  const attempts = providerAttempts(models, openrouterKeyOverride);
+  const failures: string[] = [];
+
+  for (const attempt of attempts) {
+    try {
+      const content = await callProvider(
+        attempt.url,
+        attempt.apiKey,
+        attempt.model,
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        PROVIDER_TIMEOUT_MS,
+        attempt.extraHeaders,
+      );
+      if (!content || !String(content).trim()) {
+        throw new Error('returned empty (0 chars)');
+      }
+      const { card, parseError } = parseWholeCardJson(content);
+      if (!parseError && card) {
+        const flat = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
+        return { content, provider: attempt.provider, card: flat };
+      }
+      const why = looksLikeTruncatedCardJson(content) ? 'truncated/incomplete JSON' : 'invalid JSON';
+      throw new Error(`${why} (${content?.length || 0} chars)`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`${attempt.provider} card failed (${attempt.model}):`, msg);
+      failures.push(clarifyFailure(attempt.provider === 'oneprovider' ? 'OneProvider' : 'OpenRouter', msg));
+    }
+  }
+
+  if (failures.length === 0) {
+    throw new Error('No API keys configured (ONEPROVIDER_API_KEY or OPENROUTER_API_KEY).');
+  }
+  throw new Error(formatCascadeFailure('whole-card', failures));
+}
+
 async function callLLM(
   systemPrompt: string,
   userPrompt: string,
   maxTokens = CARD_JSON_MAX_TOKENS,
   temperature = 0.3,
-  models?: { venice?: string; openrouter?: string },
+  models?: LlmModels,
   openrouterKeyOverride?: string,
 ) {
-  const override = (openrouterKeyOverride || '').trim();
-  const veniceKey = Deno.env.get('VENICE_API_KEY');
-  const openrouterKey = override || Deno.env.get('OPENROUTER_API_KEY');
+  const attempts = providerAttempts(models, openrouterKeyOverride);
   const failures: string[] = [];
 
-  // Venice first: stream-aware (extend while active; abort on stall / wall / disconnect).
-  // Skipped when an explicit BYOK key is supplied for this request.
-  if (veniceKey && !override) {
-    for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
-      try {
-        const content = await callVeniceStreaming(
-          veniceKey,
-          models?.venice || VENICE_CARD_MODEL,
-          systemPrompt,
-          userPrompt,
-          maxTokens,
-          temperature,
-        );
-        if (!content || !String(content).trim()) {
-          throw new Error('returned empty (0 chars)');
-        }
-        return { content, provider: 'venice' };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Venice attempt ${attempt}/${VENICE_MAX_ATTEMPTS} failed:`, msg);
-        failures.push(clarifyFailure('Venice', msg));
-        if (!isVeniceRetryable(msg) || attempt >= VENICE_MAX_ATTEMPTS) break;
-        const backoff = VENICE_RETRY_BASE_MS * attempt;
-        console.log(`Venice retry backoff ${backoff}ms after:`, msg);
-        await sleepMs(backoff);
+  for (const attempt of attempts) {
+    try {
+      const content = await callProvider(
+        attempt.url,
+        attempt.apiKey,
+        attempt.model,
+        systemPrompt,
+        userPrompt,
+        maxTokens,
+        temperature,
+        PROVIDER_TIMEOUT_MS,
+        attempt.extraHeaders,
+      );
+      if (!content || !String(content).trim()) {
+        throw new Error('returned empty (0 chars)');
       }
-    }
-  }
-
-  // Fallback to OpenRouter (explicit model first, then shared free instruct models).
-  if (openrouterKey) {
-    for (const model of openrouterModelsFor(models?.openrouter)) {
-      try {
-        const content = await callProvider(
-          'https://openrouter.ai/api/v1/chat/completions',
-          openrouterKey,
-          model,
-          systemPrompt,
-          userPrompt,
-          maxTokens,
-          temperature,
-          false,
-          undefined,
-          OPENROUTER_HEADERS,
-        );
-        return { content, provider: 'openrouter' };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`OpenRouter failed (${model}):`, msg);
-        failures.push(clarifyFailure('OpenRouter', msg));
-      }
+      return { content, provider: attempt.provider };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`${attempt.provider} failed (${attempt.model}):`, msg);
+      failures.push(clarifyFailure(attempt.provider === 'oneprovider' ? 'OneProvider' : 'OpenRouter', msg));
     }
   }
 
   if (failures.length === 0) {
-    throw new Error('No API keys configured (VENICE_API_KEY or OPENROUTER_API_KEY).');
+    throw new Error('No API keys configured (ONEPROVIDER_API_KEY or OPENROUTER_API_KEY).');
   }
   throw new Error(formatCascadeFailure('generic', failures));
-}
-
-/** Stream Venice chat completions; abort only if stalled or past max wall clock. */
-async function callVeniceStreaming(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  userPrompt: string,
-  maxTokens: number,
-  temperature: number,
-): Promise<string> {
-  const payload = {
-    model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    max_tokens: maxTokens,
-    temperature,
-    stream: true,
-    venice_parameters: {
-      include_venice_system_prompt: false,
-      strip_thinking_response: true,
-      disable_thinking: true,
-    },
-  };
-
-  const controller = new AbortController();
-  const started = Date.now();
-  let lastChunkAt = started;
-  let settled = false;
-
-  const watchdog = setInterval(() => {
-    if (settled) return;
-    const now = Date.now();
-    if (now - started > VENICE_MAX_WALL_MS) {
-      settled = true;
-      controller.abort('venice-wall');
-      return;
-    }
-    if (now - lastChunkAt > VENICE_STALL_MS) {
-      settled = true;
-      controller.abort('venice-stall');
-    }
-  }, 1000);
-
-  let response: Response;
-  try {
-    response = await fetch('https://api.venice.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-  } catch (e) {
-    clearInterval(watchdog);
-    if (controller.signal.aborted) {
-      const reason = String(controller.signal.reason || '');
-      if (reason.includes('wall')) {
-        throw new Error(`hung: wall clock exceeded ${VENICE_MAX_WALL_MS}ms`);
-      }
-      throw new Error(`hung: no chunk for ${VENICE_STALL_MS}ms (stall before headers)`);
-    }
-    throw e;
-  }
-
-  if (!response.ok) {
-    clearInterval(watchdog);
-    const errorData = await response.text();
-    console.error('Venice LLM API error:', errorData);
-    throw new Error(`LLM API error: ${response.status}`);
-  }
-
-  if (!response.body) {
-    clearInterval(watchdog);
-    throw new Error('hung: empty Venice stream body');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let content = '';
-  let sawChunk = false;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      lastChunkAt = Date.now();
-      sawChunk = true;
-      buffer += decoder.decode(value, { stream: true });
-
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) >= 0) {
-        let line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
-        if (line.endsWith('\r')) line = line.slice(0, -1);
-        if (!line || line.startsWith(':')) continue;
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') {
-          settled = true;
-          clearInterval(watchdog);
-          return stripThinkingBlocks(content);
-        }
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed?.choices?.[0]?.delta?.content;
-          const reasoning = parsed?.choices?.[0]?.delta?.reasoning_content;
-          if (typeof reasoning === 'string' && reasoning.length) {
-            lastChunkAt = Date.now();
-          }
-          if (typeof delta === 'string' && delta.length) {
-            content += delta;
-            lastChunkAt = Date.now();
-          }
-          const full = parsed?.choices?.[0]?.message?.content;
-          if (!delta && typeof full === 'string' && full.length) {
-            content = full;
-            lastChunkAt = Date.now();
-          }
-        } catch {
-          // ignore partial JSON
-        }
-      }
-    }
-  } catch (e) {
-    clearInterval(watchdog);
-    if (controller.signal.aborted) {
-      const reason = String(controller.signal.reason || '');
-      if (reason.includes('wall')) {
-        throw new Error(`hung: wall clock exceeded ${VENICE_MAX_WALL_MS}ms after ${content.length} chars`);
-      }
-      throw new Error(`hung: no chunk for ${VENICE_STALL_MS}ms after ${content.length} chars`);
-    }
-    throw e;
-  } finally {
-    settled = true;
-    clearInterval(watchdog);
-    try {
-      reader.releaseLock();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const cleaned = stripThinkingBlocks(content);
-  if (!cleaned) {
-    throw new Error(sawChunk ? 'hung: stream ended with empty content' : 'hung: connection died with no chunks');
-  }
-  return cleaned;
 }
 
 async function callProvider(
@@ -1266,7 +965,6 @@ async function callProvider(
   userPrompt: string,
   maxTokens: number,
   temperature: number,
-  isVenice = false,
   timeoutMs?: number,
   extraHeaders?: Record<string, string>,
 ) {
@@ -1279,9 +977,6 @@ async function callProvider(
     max_tokens: maxTokens,
     temperature,
   };
-  if (isVenice) {
-    payload.venice_parameters = { include_venice_system_prompt: false };
-  }
 
   const controller = timeoutMs ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -1341,11 +1036,11 @@ Deno.serve(async (req) => {
       // healthy with no key would enable AI buttons that are guaranteed to fail.
       // Client-side BYOK (a visitor's own key) is handled separately by the UI.
       const hasProviderKey = Boolean(
-        Deno.env.get('VENICE_API_KEY') || Deno.env.get('OPENROUTER_API_KEY'),
+        Deno.env.get('ONEPROVIDER_API_KEY') || Deno.env.get('OPENROUTER_API_KEY'),
       );
       const payload = hasProviderKey
         ? { ok: true }
-        : { ok: false, reason: 'No server AI provider key is configured (VENICE_API_KEY or OPENROUTER_API_KEY).' };
+        : { ok: false, reason: 'No server AI provider key is configured (ONEPROVIDER_API_KEY or OPENROUTER_API_KEY).' };
       return new Response(JSON.stringify(payload), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -1596,7 +1291,7 @@ Write ONLY the variable value — no labels, no quotes around it, no explanation
         prompt,
         PROMPT_VAR_MAX_TOKENS,
         0.8,
-        { venice: VENICE_PROMPT_MODEL, openrouter: byokModel || OPENROUTER_PROMPT_MODEL },
+        { oneprovider: ONEPROVIDER_PROMPT_MODEL, openrouter: byokModel || OPENROUTER_PROMPT_MODEL },
         byokOverride,
       );
 
@@ -1651,7 +1346,7 @@ Generate ALL variables listed above. Every variable must have a value. Stay cons
         prompt,
         PROMPT_ALL_VARS_MAX_TOKENS,
         0.8,
-        { venice: VENICE_PROMPT_MODEL, openrouter: byokModel || OPENROUTER_PROMPT_MODEL },
+        { oneprovider: ONEPROVIDER_PROMPT_MODEL, openrouter: byokModel || OPENROUTER_PROMPT_MODEL },
         byokOverride,
       );
 

@@ -11,7 +11,7 @@ export const AI_KEY_STORAGE = "ai-companion-hub-openrouter-key";
 export const AI_KEY_MODEL_STORAGE = "ai-companion-hub-openrouter-model";
 
 /** Default model for the shared path and for BYOK when no model is given. */
-export const DEFAULT_OPENROUTER_MODEL = "google/gemma-4-31b-it:free";
+export const DEFAULT_OPENROUTER_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition";
 
 /** Where visitors create a free OpenRouter key. */
 export const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";

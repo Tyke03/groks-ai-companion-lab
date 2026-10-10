@@ -12,7 +12,7 @@ vi.mock("@/integrations/supabase/client", () => ({
       invoke: vi.fn().mockResolvedValue({
         data: {
           ok: false,
-          reason: "No server AI provider key is configured (VENICE_API_KEY or OPENROUTER_API_KEY).",
+          reason: "No server AI provider key is configured (ONEPROVIDER_API_KEY or OPENROUTER_API_KEY).",
         },
         error: null,
       }),

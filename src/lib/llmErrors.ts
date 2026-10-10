@@ -7,7 +7,7 @@ export function formatLlmCascadeError(raw: unknown): string {
   const parts = stripped.split(/\s*\|\s*/).map((p) => p.trim()).filter(Boolean);
 
   const clarify = (part: string): string => {
-    const providerMatch = part.match(/^(Venice|OpenRouter)\s*:\s*(.*)$/i);
+    const providerMatch = part.match(/^(OneProvider|Venice|OpenRouter)\s*:\s*(.*)$/i);
     const provider = providerMatch?.[1] ?? "";
     const detail = providerMatch?.[2] ?? part;
 
@@ -29,7 +29,7 @@ export function formatLlmCascadeError(raw: unknown): string {
     return provider ? `${provider}: ${detail}` : part;
   };
 
-  if (parts.length > 0 && /Venice|OpenRouter/i.test(msg)) {
+  if (parts.length > 0 && /OneProvider|Venice|OpenRouter/i.test(msg)) {
     return parts.map(clarify).join("; ");
   }
 

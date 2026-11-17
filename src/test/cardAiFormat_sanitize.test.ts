@@ -4,7 +4,9 @@ import {
   sanitizeFieldText,
   normalizeWholeCardToHub,
   MES_EXAMPLE_FORMAT_RULES,
+  sanitizeCardData,
 } from "@/lib/cardAiFormat";
+import { emptyCardData } from "@/lib/cardTypes";
 
 describe("sanitizeCardMacros", () => {
   it("lowercases {{User}} / {{Char}} macros", () => {
@@ -72,5 +74,27 @@ describe("MES_EXAMPLE_FORMAT_RULES", () => {
     expect(MES_EXAMPLE_FORMAT_RULES).toMatch(/Block2 Private\/Core/i);
     expect(MES_EXAMPLE_FORMAT_RULES).toMatch(/Block3 High stakes\/Vulnerability/i);
     expect(MES_EXAMPLE_FORMAT_RULES).toMatch(/NOT three hellos/i);
+  });
+});
+
+describe("sanitizeCardData and mixed-case / curly apostrophe sanitization", () => {
+  it("handles mixed-case macros and curly apostrophes", () => {
+    expect(sanitizeCardMacros("{{uSeR}} holds {{cHaR’s}} hand as the user’s heart races.")).toBe(
+      "{{user}} holds {{char}}'s hand as {{user}}'s heart races.",
+    );
+  });
+
+  it("sanitizes an entire CardData object for request/export safety", () => {
+    const card = emptyCardData();
+    card.name = "Roxy";
+    card.description = "You are the user's rival, watching {{User}}.";
+    card.first_mes = "User: Hey\nRoxy: *waves at the user*";
+    card.mes_example = "<START>\nUser: Test\nRoxy: Done.";
+    card.alternate_greetings = ["{{Char}} greets The User."];
+    const clean = sanitizeCardData(card);
+    expect(clean.description).toBe("{{char}} is {{user}}'s rival, watching {{user}}.");
+    expect(clean.first_mes).toBe("{{user}}: Hey\n{{char}}: *waves at {{user}}*");
+    expect(clean.mes_example).toBe("<START>\n{{user}}: Test\n{{char}}: Done.");
+    expect(clean.alternate_greetings).toEqual(["{{char}} greets {{user}}."]);
   });
 });

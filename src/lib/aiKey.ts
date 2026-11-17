@@ -1,17 +1,43 @@
 /**
- * Bring-your-own-key (BYOK) for AI generation.
+ * Bring-your-own-key (BYOK) compatibility wrapper + access-request helpers.
  *
- * A visitor's OpenRouter key lives ONLY in this browser's localStorage and is
- * attached to each AI request. The Hub's edge function forwards it to
- * OpenRouter for that single call and never stores it. Clearing the field
- * removes it from the browser.
+ * Delegates multi-provider storage/payload merging (Venice, OpenRouter,
+ * OneProvider) to `@/lib/aiProvider` while keeping the original OpenRouter
+ * helpers intact for existing callers and tests.
  */
 
-export const AI_KEY_STORAGE = "ai-companion-hub-openrouter-key";
-export const AI_KEY_MODEL_STORAGE = "ai-companion-hub-openrouter-model";
+import {
+  AI_KEY_MODEL_STORAGE,
+  AI_KEY_STORAGE,
+  DEFAULT_OPENROUTER_MODEL,
+  clearAiProviderKey,
+  hasAnyByokKey,
+  loadAiProviderSettings,
+  saveAiProviderSettings,
+  withAiProviderSettings,
+} from "./aiProvider";
 
-/** Default model for the shared path and for BYOK when no model is given. */
-export const DEFAULT_OPENROUTER_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition";
+export {
+  AI_KEY_STORAGE,
+  AI_KEY_MODEL_STORAGE,
+  DEFAULT_OPENROUTER_MODEL,
+  type AiProviderId,
+  type AiProviderSettings,
+  type ByokKeys,
+  type CompanionBrief,
+  type ModelCatalog,
+  type ModelCatalogEntry,
+  type ProviderModelsConfig,
+  clearAiProviderKey,
+  cleanCompanionBrief,
+  emptyCompanionBrief,
+  fetchModelCatalog,
+  hasAnyByokKey,
+  loadAiProviderSettings,
+  loadCachedModelCatalog,
+  saveAiProviderSettings,
+  withAiProviderSettings,
+} from "./aiProvider";
 
 /** Where visitors create a free OpenRouter key. */
 export const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";
@@ -32,43 +58,29 @@ export interface StoredAiKey {
   model: string;
 }
 
-const canUseStorage = () => typeof window !== "undefined" && !!window.localStorage;
-
 export function loadAiKey(): StoredAiKey {
-  if (!canUseStorage()) return { key: "", model: DEFAULT_OPENROUTER_MODEL };
-  let key = "";
-  let model = DEFAULT_OPENROUTER_MODEL;
-  try {
-    key = (window.localStorage.getItem(AI_KEY_STORAGE) || "").trim();
-    model = (window.localStorage.getItem(AI_KEY_MODEL_STORAGE) || "").trim() || DEFAULT_OPENROUTER_MODEL;
-  } catch {
-    // ignore storage failures (private mode / storage disabled)
-  }
-  return { key, model };
+  const settings = loadAiProviderSettings();
+  return {
+    key: settings.byok.openrouter,
+    model: settings.models.openrouter[0] || DEFAULT_OPENROUTER_MODEL,
+  };
 }
 
 export function saveAiKey(input: { key: string; model?: string }): StoredAiKey {
   const key = (input.key || "").trim();
   const model = (input.model || "").trim() || DEFAULT_OPENROUTER_MODEL;
-  if (canUseStorage()) {
-    try {
-      if (key) window.localStorage.setItem(AI_KEY_STORAGE, key);
-      else window.localStorage.removeItem(AI_KEY_STORAGE);
-      window.localStorage.setItem(AI_KEY_MODEL_STORAGE, model);
-    } catch {
-      // ignore storage failures
-    }
-  }
-  return { key, model };
+  const saved = saveAiProviderSettings({
+    byok: { openrouter: key },
+    models: { openrouter: [model] },
+  });
+  return {
+    key: saved.byok.openrouter,
+    model: saved.models.openrouter[0] || DEFAULT_OPENROUTER_MODEL,
+  };
 }
 
 export function clearAiKey(): void {
-  if (!canUseStorage()) return;
-  try {
-    window.localStorage.removeItem(AI_KEY_STORAGE);
-  } catch {
-    // ignore
-  }
+  clearAiProviderKey("openrouter");
 }
 
 /** Mask a key for display: sk-or-v1…c45 */
@@ -139,18 +151,26 @@ export const HOW_TO_GET_KEY_STEPS = [
 ];
 
 /**
- * Merge a stored BYOK key/model into an edge-function request body. No key
- * means the request falls back to the Hub's shared provider path.
+ * Merge stored 3-provider BYOK keys and model preferences into an edge-function
+ * request body. When called with an explicit legacy `StoredAiKey`, honors it.
  */
 export function withAiKey(body: Record<string, unknown>, stored?: StoredAiKey): Record<string, unknown> {
-  const resolved = stored ?? loadAiKey();
-  const key = (resolved.key || "").trim();
-  if (!key) return body;
-  const model = (resolved.model || "").trim();
-  return model ? { ...body, openrouterKey: key, openrouterModel: model } : { ...body, openrouterKey: key };
+  if (stored) {
+    const key = (stored.key || "").trim();
+    if (!key) return body;
+    const model = (stored.model || "").trim();
+    return {
+      ...body,
+      byok: { openrouter: key },
+      ...(model ? { models: { openrouter: [model] }, openrouterModel: model } : {}),
+      openrouterKey: key,
+    };
+  }
+  return withAiProviderSettings(body);
 }
 
-/** True when a client key is present (used to keep AI enabled with no server key). */
+/** True when any client BYOK key is present (keeps AI enabled with no server key). */
 export function hasAiKey(stored?: StoredAiKey): boolean {
-  return ((stored ?? loadAiKey()).key || "").trim().length > 0;
+  if (stored) return (stored.key || "").trim().length > 0;
+  return hasAnyByokKey();
 }

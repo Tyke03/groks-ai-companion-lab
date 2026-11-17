@@ -1,18 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
-import { loadAiKey } from "@/lib/aiKey";
+import { hasAnyByokKey } from "@/lib/aiProvider";
 
 export type AiBackendStatus = "checking" | "available" | "unavailable";
+
+export interface AiBackendProviders {
+  venice: boolean;
+  openrouter: boolean;
+  oneprovider: boolean;
+}
 
 export interface AiBackendState {
   status: AiBackendStatus;
   /** Human-readable explanation when status is "unavailable". */
   reason: string | null;
-  /** True when the visitor supplied their own OpenRouter key (BYOK). */
+  /** True when the visitor supplied any BYOK key (Venice, OpenRouter, or OneProvider). */
   hasByok: boolean;
-  /** True when AI can run via the Hub's shared server key. */
+  /** True when AI can run via the Hub's shared server key(s). */
   hasServerKey: boolean;
-  /** Re-read the stored BYOK key and re-probe the backend. */
+  /** Configured server providers reported by the edge function health endpoint. */
+  providers?: AiBackendProviders;
+  /** Re-read stored BYOK keys and re-probe the backend. */
   refresh: () => void;
 }
 
@@ -21,23 +29,17 @@ export interface AiBackendState {
  * generation can run. Tools use this to degrade gracefully: manual features
  * (editing, export, import) always work; AI buttons are disabled with a clear
  * explanation only when neither the shared backend nor a visitor key is usable.
- *
- * A visitor-supplied OpenRouter key (BYOK, stored in this browser) enables AI
- * even when the Hub has no server provider key configured.
  */
 export function useAiBackendStatus(): AiBackendState {
-  const [hasByok, setHasByok] = useState<boolean>(() => {
-    const stored = loadAiKey();
-    return stored.key.trim().length > 0;
-  });
+  const [hasByok, setHasByok] = useState<boolean>(() => hasAnyByokKey());
   const [hasServerKey, setHasServerKey] = useState(false);
+  const [providers, setProviders] = useState<AiBackendProviders | undefined>(undefined);
   const [status, setStatus] = useState<AiBackendStatus>("checking");
   const [reason, setReason] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   const refresh = useCallback(() => {
-    const stored = loadAiKey();
-    setHasByok(stored.key.trim().length > 0);
+    setHasByok(hasAnyByokKey());
     setNonce((n) => n + 1);
   }, []);
 
@@ -50,6 +52,7 @@ export function useAiBackendStatus(): AiBackendState {
     // BYOK cannot help here: the edge function that proxies the key is unreachable.
     if (!isSupabaseConfigured || !supabase) {
       setHasServerKey(false);
+      setProviders(undefined);
       setStatus("unavailable");
       setReason("Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY are missing or malformed).");
       return;
@@ -66,7 +69,13 @@ export function useAiBackendStatus(): AiBackendState {
           ),
         ]);
         if (cancelled) return;
-        const data = result.data as { ok?: boolean; reason?: string } | null;
+        const data = result.data as {
+          ok?: boolean;
+          reason?: string;
+          providers?: AiBackendProviders;
+        } | null;
+        if (data?.providers) setProviders(data.providers);
+
         if (!result.error && data?.ok) {
           setHasServerKey(true);
           setStatus("available");
@@ -105,5 +114,5 @@ export function useAiBackendStatus(): AiBackendState {
     };
   }, [hasByok, nonce]);
 
-  return { status, reason, hasByok, hasServerKey, refresh };
+  return { status, reason, hasByok, hasServerKey, providers, refresh };
 }

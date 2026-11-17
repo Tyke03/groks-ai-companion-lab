@@ -5,6 +5,7 @@ import {
   repairJsonString,
   extractCardFieldsFuzzy,
   normalizeWholeCardToHub,
+  looksLikeTruncatedCardJson,
 } from "@/lib/cardAiFormat";
 
 describe("stripThinkingBlocks", () => {
@@ -153,3 +154,21 @@ Step 2: Generate greetings
 });
 
 
+
+describe("looksLikeTruncatedCardJson and R8 truncation rejection", () => {
+  it("detects truncated JSON even when {{char}} macros appear inside unfinished strings", () => {
+    const truncated = '{"name": "Roxy", "description": "She watches {{char}} and {{user}} closely';
+    expect(looksLikeTruncatedCardJson(truncated)).toBe(true);
+    const { card, parseError } = parseWholeCardJson(truncated, { rejectTruncated: true });
+    expect(parseError).toBe(true);
+    expect(card).toBeNull();
+  });
+
+  it("accepts complete JSON containing {{char}} and {{user}} macros and dialogue quotes", () => {
+    const complete = '{\n  "name": "Roxy",\n  "first_mes": "*smiles* "Hello {{user}}!" *waves at {{char}}*"\n}';
+    expect(looksLikeTruncatedCardJson(complete)).toBe(false);
+    const { card, parseError } = parseWholeCardJson(complete, { rejectTruncated: true });
+    expect(parseError).toBe(false);
+    expect(card?.name).toBe("Roxy");
+  });
+});

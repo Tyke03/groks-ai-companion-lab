@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { withAiKey } from "@/lib/aiKey";
 import { AiKeySettings } from "@/components/tools/AiKeySettings";
+import { edgeInvokeError } from "@/lib/llmErrors";
 import { WorkbenchCardPicker, NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { Loader2, Copy, Check, Download, AlertTriangle, Globe, WifiOff, Link2, FileText, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -149,19 +150,27 @@ export const DocConsolidator = () => {
       return;
     }
 
+    if (!supabase) {
+      const hint = coachFetchError("URL fetching is unavailable because Supabase is not configured.");
+      setFetchHint(hint);
+      toast({ title: "Unavailable", description: hint, variant: "destructive" });
+      return;
+    }
+
     setFetching(true);
     try {
-      const response = await withTimeout(
-        fetch("/api/fetch-doc", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: docUrl.trim() }),
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke("venice-ai", {
+          body: withAiKey({
+            action: "fetch-url",
+            url: docUrl.trim(),
+          }),
         }),
         FETCH_TIMEOUT_MS,
         "Fetch",
       );
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || `Fetch failed (${response.status})`);
+      if (error) throw new Error(await edgeInvokeError(error, data));
+      if (data?.error) throw new Error(String(data.error));
       if (data?.text) {
         setInputText(data.text);
         setFetchHint("");
@@ -347,7 +356,7 @@ export const DocConsolidator = () => {
           </div>
         </div>
       )}
-      {(aiUnavailable || ai.hasByok) && <AiKeySettings onChange={ai.refresh} requestContext="Doc Consolidator" />}
+      {(aiUnavailable || ai.hasByok) && <AiKeySettings onChange={ai.refresh} requestContext="Doc Consolidator" hasServerKey={ai.hasServerKey} />}
 
       <div className="space-y-4">
         <div>

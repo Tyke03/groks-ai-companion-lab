@@ -102,6 +102,41 @@ export function formatCardContextLabeled(card: CardData, label?: string): string
   return lines.join("\n").trim();
 }
 
+/** Canonical client raw-context safety ceiling (aligned with venice-ai RAW_CONTEXT_MAX_CHARS). */
+export const PROMPT_RAW_CONTEXT_MAX_CHARS = 120_000;
+
+export function trimPromptRawContext(raw: unknown, max = PROMPT_RAW_CONTEXT_MAX_CHARS): string {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+const COMPACT_CAPS: { key: keyof CardData; max: number }[] = [
+  { key: "name", max: 120 },
+  { key: "nickname", max: 120 },
+  { key: "description", max: 800 },
+  { key: "personality", max: 600 },
+  { key: "scenario", max: 600 },
+  { key: "first_mes", max: 800 },
+  { key: "tags", max: 300 },
+];
+
+export function formatCompactCardContext(card: CardData, label?: string): string {
+  const lines: string[] = [];
+  if (label) lines.push(`# Workbench card: ${label}`);
+  for (const { key, max } of COMPACT_CAPS) {
+    const val = card[key];
+    if (typeof val !== "string" || !val.trim()) continue;
+    lines.push(`## ${key}`);
+    lines.push(trimPromptRawContext(val, max));
+    lines.push("");
+  }
+  const out = lines.join("\n").trim();
+  return out.length > 4800 ? `${out.slice(0, 4799).trimEnd()}…` : out;
+}
+
 export function formatSlotContext(slot: StoredCardSlot): string {
   return formatCardContextLabeled(slot.card, slot.label);
 }

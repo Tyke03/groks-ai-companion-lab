@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers, Link2 } from "lucide-react";
+import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers, Link2, ChevronDown, ChevronRight, ListOrdered } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { embedCardInPng, extractCardFromPng } from "@/lib/pngChunk";
@@ -32,7 +32,7 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
-import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult, normalizeWholeCardToHub, sanitizeFieldText, sanitizeCardMacros } from "@/lib/cardAiFormat";
+import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult, normalizeWholeCardToHub, sanitizeFieldText, sanitizeCardMacros, sanitizeCardData } from "@/lib/cardAiFormat";
 import {
   createNewCard,
   deleteCard,
@@ -50,6 +50,7 @@ import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { RefinePopover } from "@/components/tools/RefinePopover";
 import { formatLlmCascadeError } from "@/lib/llmErrors";
 import { withAiKey } from "@/lib/aiKey";
+import { cleanCompanionBrief, emptyCompanionBrief, type CompanionBrief } from "@/lib/aiProvider";
 import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { convertImageFileToPng, deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
 import { isLorebookBoundToCard, loadLorebook, lorebookHasContent, toCharacterBook } from "@/lib/lorebookStorage";
@@ -90,6 +91,47 @@ const fieldCurrentValue = (value: unknown): string => {
   if (Array.isArray(value)) return value.map((v) => String(v ?? "")).filter((s) => s.trim()).join("\n");
   return value == null ? "" : String(value);
 };
+
+const BRIEF_STORAGE_KEY = "ai-companion-hub-author-brief-v1";
+
+function loadStoredBrief(): CompanionBrief {
+  if (typeof window === "undefined" || !window.localStorage) return emptyCompanionBrief();
+  try {
+    const raw = window.localStorage.getItem(BRIEF_STORAGE_KEY);
+    if (!raw) return emptyCompanionBrief();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return emptyCompanionBrief();
+    return { ...emptyCompanionBrief(), ...parsed };
+  } catch {
+    return emptyCompanionBrief();
+  }
+}
+
+function applyFieldResultToCard(
+  prev: CardData,
+  fieldName: keyof CardData,
+  rawResult: unknown,
+  arrayFields: Set<string>,
+): CardData {
+  const { value } = applyGenerateFieldResult(String(fieldName), rawResult);
+  const sanitized = sanitizeFieldText(value, String(fieldName));
+  const next = { ...prev };
+  if (arrayFields.has(fieldName)) {
+    const max = fieldName === "alternate_greetings" ? 3 : undefined;
+    (next as Record<string, unknown>)[fieldName] = parseAiStringList(sanitized, { max }).map((s) =>
+      sanitizeCardMacros(s, String(fieldName)),
+    );
+  } else if (fieldName === "mes_example" || fieldName === "first_mes") {
+    (next as Record<string, unknown>)[fieldName] = sanitizeCardMacros(
+      normalizeAiMultiline(String(sanitized ?? "")),
+      String(fieldName),
+    );
+  } else {
+    const asStr = typeof sanitized === "string" ? sanitized : sanitized == null ? "" : String(sanitized);
+    (next as Record<string, unknown>)[fieldName] = sanitizeCardMacros(asStr, String(fieldName));
+  }
+  return next;
+}
 
 
 /** Prefer edge JSON `{ error }` over opaque Supabase "non-2xx" invoke messages. */
@@ -304,6 +346,10 @@ export const CharacterCardBuilder = () => {
   const [copied, setCopied] = useState(false);
   const [generatingField, setGeneratingField] = useState<string | null>(null);
   const [generatingAll, setGeneratingAll] = useState(false);
+  const [generatingStaged, setGeneratingStaged] = useState(false);
+  const [stagedProgress, setStagedProgress] = useState<string | null>(null);
+  const [showBrief, setShowBrief] = useState(false);
+  const [brief, setBrief] = useState<CompanionBrief>(() => loadStoredBrief());
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -374,6 +420,15 @@ export const CharacterCardBuilder = () => {
   }, []);
 
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(BRIEF_STORAGE_KEY, JSON.stringify(brief));
+    } catch {
+      // ignore storage errors
+    }
+  }, [brief]);
+
   // Persist the active slot whenever editor state changes (multi-card safe).
   useEffect(() => {
     setLibrary((prev) => {
@@ -427,10 +482,11 @@ export const CharacterCardBuilder = () => {
     };
   }, [preserved, includeBoundLorebook, boundLorebook]);
 
-  /** Current export envelope for the selected spec version, built by the codec. */
+  /** Current export envelope for the selected spec version (R7: always sanitized before export). */
   const currentExport = useMemo(() => {
-    if (specVersion === "v3") return buildV3Envelope(card, exportPreserved);
-    return buildV2Envelope(card, exportPreserved);
+    const cleanCard = sanitizeCardData(card);
+    if (specVersion === "v3") return buildV3Envelope(cleanCard, exportPreserved);
+    return buildV2Envelope(cleanCard, exportPreserved);
   }, [specVersion, card, exportPreserved]);
 
   /** Import-time + export-time notices that must be visible to the user. */
@@ -600,21 +656,24 @@ export const CharacterCardBuilder = () => {
     }
     const refinementNotes = typeof notes === "string" ? notes.trim() : "";
     const useRefine = refinementNotes.length > 0;
+    const sanitizedCard = sanitizeCardData(card);
+    const cleanedBrief = cleanCompanionBrief(brief);
     setGeneratingField(fieldName);
     try {
-      // Pass EVERY labeled field (including the target) so the edge function can rebuild the whole card, then slice.
-      // When refining, also pass refinementNotes + currentValue so edge uses targeted DELTA path.
       const body: Record<string, unknown> = {
         action: "generate-field",
         fieldName,
         fieldDescription: fieldDescriptions[fieldName],
-        existingFields: card,
+        existingFields: sanitizedCard,
         specVersion,
-        keywords: Array.isArray(card[fieldName]) ? (card[fieldName] as string[]).join(", ") : card[fieldName] || undefined,
+        keywords: Array.isArray(sanitizedCard[fieldName])
+          ? (sanitizedCard[fieldName] as string[]).join(", ")
+          : sanitizedCard[fieldName] || undefined,
       };
+      if (cleanedBrief) body.brief = cleanedBrief;
       if (useRefine) {
         body.refinementNotes = refinementNotes;
-        body.currentValue = fieldCurrentValue(card[fieldName]);
+        body.currentValue = fieldCurrentValue(sanitizedCard[fieldName]);
       }
       const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
       if (error) throw new Error(await edgeInvokeError(error, data));
@@ -627,25 +686,13 @@ export const CharacterCardBuilder = () => {
           title: "Partial result",
           description: data?.error
             ? formatLlmCascadeError(data.error)
-            : "AI rebuilt the card but the response could not be parsed for this field.",
+            : "AI response could not be parsed for this field.",
           variant: "destructive",
         });
         return;
       }
       if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
-        // Safety: if a whole card object sneaks through, apply ONLY fieldName.
-        const { value } = applyGenerateFieldResult(String(fieldName), data.result);
-        // Sanitize macros/POV slips (normalizeWholeCardToHub already sanitizes hub path).
-        const sanitized = sanitizeFieldText(value, String(fieldName));
-        if (ARRAY_FIELDS.has(fieldName)) {
-          const max = fieldName === "alternate_greetings" ? 3 : undefined;
-          updateList(fieldName, parseAiStringList(sanitized, { max }).map((s) => sanitizeCardMacros(s, String(fieldName))));
-        } else if (fieldName === "mes_example" || fieldName === "first_mes") {
-          updateField(fieldName, sanitizeCardMacros(normalizeAiMultiline(String(sanitized ?? "")), String(fieldName)));
-        } else {
-          const asStr = typeof sanitized === "string" ? sanitized : sanitized == null ? "" : String(sanitized);
-          updateField(fieldName, sanitizeCardMacros(asStr, String(fieldName)));
-        }
+        setCard((prev) => applyFieldResultToCard(prev, fieldName, data.result, ARRAY_FIELDS));
         if (useRefine || data?.refined) {
           toast({ title: "Refined", description: `Updated ${String(fieldName)} from your notes.` });
         }
@@ -657,6 +704,92 @@ export const CharacterCardBuilder = () => {
     }
   };
 
+  const handleGenerateStaged = async (notes?: string) => {
+    if (!supabase) {
+      toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
+      return;
+    }
+    const refinementNotes = typeof notes === "string" ? notes.trim() : "";
+    const useRefine = refinementNotes.length > 0;
+    const cleanedBrief = cleanCompanionBrief(brief);
+
+    let workingCard = sanitizeCardData(card);
+    const stages: { label: string; fields: (keyof CardData)[] }[] = [
+      {
+        label: "Stage 1/3",
+        fields: [
+          ...(workingCard.name.trim() ? [] : (["name"] as (keyof CardData)[])),
+          "description",
+          "personality",
+          "scenario",
+        ],
+      },
+      {
+        label: "Stage 2/3",
+        fields: ["first_mes", "mes_example"],
+      },
+      {
+        label: "Stage 3/3",
+        fields: [
+          "system_prompt",
+          "post_history_instructions",
+          "creator_notes",
+          "tags",
+          "alternate_greetings",
+        ],
+      },
+    ];
+
+    setGeneratingStaged(true);
+    let completed = 0;
+    let lastProvider = "";
+    try {
+      for (const stage of stages) {
+        for (const fieldName of stage.fields) {
+          setStagedProgress(`${stage.label}: ${String(fieldName)}…`);
+          const sanitizedContext = sanitizeCardData(workingCard);
+          const body: Record<string, unknown> = {
+            action: "generate-field",
+            fieldName,
+            fieldDescription: fieldDescriptions[fieldName],
+            existingFields: sanitizedContext,
+            specVersion,
+          };
+          if (cleanedBrief) body.brief = cleanedBrief;
+          if (useRefine) {
+            body.refinementNotes = refinementNotes;
+            body.currentValue = fieldCurrentValue(sanitizedContext[fieldName]);
+          }
+          const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
+          if (error) throw new Error(await edgeInvokeError(error, data));
+          if (data?.error) throw new Error(String(data.error));
+          if (data?.parseError) {
+            throw new Error(String(data?.error || `Failed to parse ${String(fieldName)}.`));
+          }
+          if (data?.provider) lastProvider = String(data.provider);
+          if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
+            workingCard = applyFieldResultToCard(workingCard, fieldName, data.result, ARRAY_FIELDS);
+            setCard(workingCard);
+            completed += 1;
+          }
+        }
+      }
+      toast({
+        title: useRefine ? "Staged refine complete" : "Staged generation complete",
+        description: `Updated ${completed} fields across 3 stages${lastProvider ? ` via ${lastProvider}` : ""}.`,
+      });
+    } catch (err) {
+      toast({
+        title: completed > 0 ? `Stopped after ${completed} field(s)` : "Staged generation failed",
+        description: formatLlmCascadeError(errMsg(err) || "Failed during staged generation."),
+        variant: "destructive",
+      });
+    } finally {
+      setGeneratingStaged(false);
+      setStagedProgress(null);
+    }
+  };
+
   const handleGenerateAll = async (notes?: string) => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
@@ -664,14 +797,16 @@ export const CharacterCardBuilder = () => {
     }
     const refinementNotes = typeof notes === "string" ? notes.trim() : "";
     const useRefine = refinementNotes.length > 0;
+    const cleanedBrief = cleanCompanionBrief(brief);
     setGeneratingAll(true);
     try {
       const body: Record<string, unknown> = {
         action: "generate-all",
-        existingFields: card,
+        existingFields: sanitizeCardData(card),
         generationMode: "default",
         specVersion,
       };
+      if (cleanedBrief) body.brief = cleanedBrief;
       if (useRefine) body.refinementNotes = refinementNotes;
       const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
       if (error) throw new Error(await edgeInvokeError(error, data));
@@ -688,19 +823,19 @@ export const CharacterCardBuilder = () => {
               const record = updated as Record<string, unknown>;
               if (ARRAY_FIELDS.has(key)) {
                 const max = key === "alternate_greetings" ? 3 : undefined;
-                record[key] = parseAiStringList(value, { max });
+                record[key] = parseAiStringList(value, { max }).map((s) => sanitizeCardMacros(s, key));
               } else if (key === "mes_example" || key === "first_mes") {
-                record[key] = normalizeAiMultiline(String(value ?? ""));
+                record[key] = sanitizeCardMacros(normalizeAiMultiline(String(value ?? "")), key);
               } else if (typeof value === "string") {
-                record[key] = value;
+                record[key] = sanitizeCardMacros(value, key);
               } else if (Array.isArray(value)) {
-                record[key] = value.map(String).join(", ");
+                record[key] = sanitizeCardMacros(value.map(String).join(", "), key);
               } else if (value != null) {
-                record[key] = String(value);
+                record[key] = sanitizeCardMacros(String(value), key);
               }
             }
           }
-          return updated;
+          return sanitizeCardData(updated);
         });
         toast({
           title: useRefine || data?.refined ? "Refined" : "Generated",
@@ -713,7 +848,7 @@ export const CharacterCardBuilder = () => {
           title: "Partial result",
           description: data?.error
             ? formatLlmCascadeError(data.error)
-            : "AI response couldn't be parsed. Try generating individual fields.",
+            : "AI response couldn't be parsed. Try staged generation or individual fields.",
           variant: "destructive",
         });
       }
@@ -897,8 +1032,8 @@ export const CharacterCardBuilder = () => {
           <div className="text-sm">
             <p className="font-medium neon-callout">AI backend unavailable</p>
             <p className="text-muted-foreground">
-              Manual editing, import, JSON export, and PNG embedding still work. Add your own OpenRouter key
-              under Generation settings (the ⚙ button) to turn AI generation on, or try again later.
+              Manual editing, import, JSON export, and PNG embedding still work. Add your own Venice,
+              OpenRouter, or OneProvider key under Generation settings (the ⚙ button) to turn AI generation on.
             </p>
             {ai.reason && <p className="mt-1 text-xs text-muted-foreground/80">{ai.reason}</p>}
           </div>
@@ -1045,19 +1180,44 @@ export const CharacterCardBuilder = () => {
             <Upload className="h-4 w-4" /> Import (File/PNG)
           </Button>
         </div>
-        <div className="flex items-center gap-1"><Button onClick={() => handleGenerateAll()} disabled={generatingAll || aiUnavailable}>
-          {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {generatingAll ? "Generating..." : "Generate All Fields"}
-        </Button>
-        <RefinePopover
-          compact={false}
-          label="Refine All"
-          disabled={generatingAll || aiUnavailable || generatingField !== null}
-          loading={generatingAll}
-          onRefine={(notes) => void handleGenerateAll(notes)}
-          data-testid="refine-all"
-        />
-        <Button variant="outline" size="icon" onClick={() => setShowGenerationSettings((value) => !value)} aria-label="Generation settings" title="Generation settings"><Settings2 className="h-4 w-4" /></Button></div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            onClick={() => void handleGenerateStaged()}
+            disabled={generatingStaged || generatingAll || generatingField !== null || aiUnavailable}
+            data-testid="generate-staged-button"
+          >
+            {generatingStaged ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListOrdered className="h-4 w-4" />}
+            {stagedProgress ? stagedProgress : "Generate (Staged)"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void handleGenerateAll()}
+            disabled={generatingAll || generatingStaged || generatingField !== null || aiUnavailable}
+            data-testid="generate-all-oneshot-button"
+          >
+            {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {generatingAll ? "Generating..." : "One-Shot Gen All"}
+          </Button>
+          <RefinePopover
+            compact={false}
+            label="Refine All"
+            disabled={generatingAll || generatingStaged || aiUnavailable || generatingField !== null}
+            loading={generatingAll}
+            onRefine={(notes) => void handleGenerateAll(notes)}
+            data-testid="refine-all"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowBrief((v) => !v)}
+            aria-expanded={showBrief}
+            data-testid="companion-brief-toggle"
+          >
+            {showBrief ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            Author Brief
+          </Button>
+          <Button variant="outline" size="icon" onClick={() => setShowGenerationSettings((value) => !value)} aria-label="Generation settings" title="Generation settings"><Settings2 className="h-4 w-4" /></Button>
+        </div>
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10">
@@ -1077,8 +1237,92 @@ export const CharacterCardBuilder = () => {
         </AlertDialog>
       </div>
 
+      {showBrief && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3" data-testid="companion-brief-panel">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-foreground">Author Brief (Optional Seed)</p>
+              <p className="text-xs text-muted-foreground">
+                Guides single-field, staged, and one-shot generation. Saved in this browser only.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setBrief(emptyCompanionBrief())}
+            >
+              Clear brief
+            </Button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label htmlFor="brief-concept" className="mb-1 block text-xs font-medium text-foreground">Concept / Premise</label>
+              <Input
+                id="brief-concept"
+                value={brief.concept}
+                onChange={(e) => setBrief((prev) => ({ ...prev, concept: e.target.value }))}
+                placeholder="Exiled royal archivist hiding in a neon port"
+                className="bg-secondary text-xs"
+              />
+            </div>
+            <div>
+              <label htmlFor="brief-archetype" className="mb-1 block text-xs font-medium text-foreground">Archetype / Dynamic</label>
+              <Input
+                id="brief-archetype"
+                value={brief.archetype}
+                onChange={(e) => setBrief((prev) => ({ ...prev, archetype: e.target.value }))}
+                placeholder="Guarded mentor / reluctant ally"
+                className="bg-secondary text-xs"
+              />
+            </div>
+            <div>
+              <label htmlFor="brief-tone" className="mb-1 block text-xs font-medium text-foreground">Tone</label>
+              <Input
+                id="brief-tone"
+                value={brief.tone}
+                onChange={(e) => setBrief((prev) => ({ ...prev, tone: e.target.value }))}
+                placeholder="Slow-burn noir, sharp banter"
+                className="bg-secondary text-xs"
+              />
+            </div>
+            <div>
+              <label htmlFor="brief-setting" className="mb-1 block text-xs font-medium text-foreground">Setting</label>
+              <Input
+                id="brief-setting"
+                value={brief.setting}
+                onChange={(e) => setBrief((prev) => ({ ...prev, setting: e.target.value }))}
+                placeholder="Rain-slicked clocktower bookshop at midnight"
+                className="bg-secondary text-xs"
+              />
+            </div>
+            <div>
+              <label htmlFor="brief-user-role" className="mb-1 block text-xs font-medium text-foreground">{"{{user}}"} Role</label>
+              <Input
+                id="brief-user-role"
+                value={brief.userRole}
+                onChange={(e) => setBrief((prev) => ({ ...prev, userRole: e.target.value }))}
+                placeholder="New courier carrying a sealed ledger"
+                className="bg-secondary text-xs"
+              />
+            </div>
+            <div>
+              <label htmlFor="brief-voice" className="mb-1 block text-xs font-medium text-foreground">Voice / Speech Tells</label>
+              <Input
+                id="brief-voice"
+                value={brief.voiceNotes}
+                onChange={(e) => setBrief((prev) => ({ ...prev, voiceNotes: e.target.value }))}
+                placeholder="Clipped dry wit, taps brass pocketwatch when lying"
+                className="bg-secondary text-xs"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {showGenerationSettings && (
-        <AiKeySettings onChange={ai.refresh} requestContext="Character Card Builder" />
+        <AiKeySettings onChange={ai.refresh} requestContext="Character Card Builder" hasServerKey={ai.hasServerKey} />
       )}
 
       {/* Fields */}
@@ -1093,13 +1337,13 @@ export const CharacterCardBuilder = () => {
                 )}
                 {generatableFields.has(field.key) && (
                   <>
-                    <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || generatingAll || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
+                    <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || generatingAll || generatingStaged || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
                       {generatingField === field.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
                       {generatingField === field.key ? "Generating..." : "AI Generate"}
                     </Button>
                     {fieldHasTrimContent(card[field.key]) && (
                       <RefinePopover
-                        disabled={generatingField === field.key || generatingAll || aiUnavailable}
+                        disabled={generatingField === field.key || generatingAll || generatingStaged || aiUnavailable}
                         loading={generatingField === field.key}
                         onRefine={(notes) => void handleGenerateField(field.key, notes)}
                         data-testid={`refine-field-${field.key}`}

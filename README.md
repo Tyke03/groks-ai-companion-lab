@@ -59,12 +59,12 @@ supabase/
 
 ## AI backend (Supabase edge function)
 
-The tools' AI features (card generation, doc consolidation, prompt generation, URL fetching) run through the `venice-ai` Supabase edge function. It tries providers in order: **OneProvider** → **OpenRouter** using the `ONEPROVIDER_API_KEY` and `OPENROUTER_API_KEY` server secrets. The Lovable AI Gateway is not used. Venice Uncensored is reached as an OpenRouter model (`cognitivecomputations/dolphin-mistral-24b-venice-edition`).
+The tools' AI features (card generation, doc consolidation, prompt generation, URL fetching) run through the `venice-ai` Supabase edge function. On the shared server path, it tries providers in order: **Venice** (`zai-org-glm-4.7-flash`) → **OpenRouter** → **OneProvider** using the `VENICE_API_KEY`, `OPENROUTER_API_KEY`, and `ONEPROVIDER_API_KEY` server secrets.
 
-Because the site must stay useful with a minimal budget, AI can run three ways:
+AI can run three ways:
 
-1. **Shared backend (default).** `ONEPROVIDER_API_KEY` is tried first (Grok, then GLM Flash). `OPENROUTER_API_KEY` is the fallback, starting at Venice Uncensored, then Euryale / MythoMax, then a free Gemma instruct model.
-2. **BYOK (bring your own key).** A visitor can paste their own OpenRouter key in the Workbench. It is stored only in their browser (`localStorage`), attached per request, and never persisted on the server. This keeps AI working even if the shared key is missing or rate-limited. The UI includes step-by-step "how to get a key" instructions.
+1. **Shared backend / Simple path (default).** Zero visitor setup. `VENICE_API_KEY` is tried first (`zai-org-glm-4.7-flash` streaming), then `OPENROUTER_API_KEY` (Venice Uncensored, Euryale, MythoMax, Gemma instruct), then `ONEPROVIDER_API_KEY` (`grok-4.7`, `glm-5.3-flash`).
+2. **BYOK / Power path.** A visitor can supply their own API key(s) for **Venice**, **OpenRouter**, and/or **OneProvider**, choose their preferred provider, and pick from live-fetched provider models (or enter any model ID). Visitor keys are stored only in browser `localStorage`, forwarded per request, and never persisted or logged server-side.
 3. **Request access.** When neither is available, the UI offers a form (mailto fallback) so access can be granted case by case.
 
 Deploy after changing it:
@@ -73,7 +73,7 @@ Deploy after changing it:
 npx supabase functions deploy venice-ai
 ```
 
-Set secrets with `npx supabase secrets set OPENROUTER_API_KEY=...` (and optionally `ONEPROVIDER_API_KEY=...`).
+Set secrets with `npx supabase secrets set VENICE_API_KEY=... OPENROUTER_API_KEY=... ONEPROVIDER_API_KEY=...`.
 
 The web app probes the function on load; if it is unreachable AND no visitor key is set, tools show a graceful-degradation banner, offer the BYOK/request paths, and manual editing/export still work.
 

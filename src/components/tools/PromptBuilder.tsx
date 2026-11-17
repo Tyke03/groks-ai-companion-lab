@@ -384,7 +384,7 @@ export const PromptBuilder = () => {
           </div>
         </div>
       )}
-      {(aiUnavailable || ai.hasByok) && <AiKeySettings onChange={ai.refresh} requestContext="Prompt Builder" />}
+      {(aiUnavailable || ai.hasByok) && <AiKeySettings onChange={ai.refresh} requestContext="Prompt Builder" hasServerKey={ai.hasServerKey} />}
 
       <div className="space-y-4">
         <span id="prompt-template-label" className="block text-sm font-medium text-foreground">Select Template</span>

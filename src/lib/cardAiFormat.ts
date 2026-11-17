@@ -3,6 +3,8 @@
  * Keeps SillyTavern-style mes_example newlines intact after generation.
  */
 
+import type { CardData } from './cardTypes';
+
 /** Prompt fragment describing required mes_example format (also mirrored in venice-ai). */
 export const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern example dialogue:
 
@@ -324,9 +326,131 @@ export function extractCardFieldsFuzzy(raw: string): Record<string, unknown> | n
   return Object.keys(result).length >= 2 ? result : null;
 }
 
+function inspectJsonObjectBounds(rawText: string): {
+  hasOpeningFenceUnclosed: boolean;
+  firstBrace: number;
+  rootCloseIndex: number;
+  inString: boolean;
+  openDepth: number;
+} {
+  let text = stripThinkingBlocks(String(rawText ?? '')).trim();
+  const closedFence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  let hasOpeningFenceUnclosed = false;
+  if (closedFence) {
+    text = closedFence[1].trim();
+  } else if (/```(?:json)?\b/i.test(text)) {
+    hasOpeningFenceUnclosed = true;
+    text = text.replace(/^```(?:json)?\s*/i, '').trim();
+  }
+
+  const firstBrace = text.indexOf('{');
+  if (firstBrace === -1) {
+    return { hasOpeningFenceUnclosed, firstBrace: -1, rootCloseIndex: -1, inString: false, openDepth: 0 };
+  }
+
+  const chars = Array.from(text);
+  let inString = false;
+  let isKey = false;
+  let isEscaped = false;
+  const stack: ('{' | '[')[] = [];
+  let rootCloseIndex = -1;
+
+  for (let i = firstBrace; i < chars.length; i++) {
+    const ch = chars[i];
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        isEscaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        let nextNonWs = '';
+        for (let j = i + 1; j < chars.length; j++) {
+          if (!/\s/.test(chars[j])) {
+            nextNonWs = chars[j];
+            break;
+          }
+        }
+        if (isKey) {
+          if (nextNonWs === ':') {
+            inString = false;
+            isKey = false;
+          }
+        } else if (
+          nextNonWs === ',' ||
+          nextNonWs === '}' ||
+          nextNonWs === ']' ||
+          nextNonWs === '' ||
+          nextNonWs === ':'
+        ) {
+          inString = false;
+        }
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      let prevNonWs = '';
+      for (let j = i - 1; j >= firstBrace; j--) {
+        if (!/\s/.test(chars[j])) {
+          prevNonWs = chars[j];
+          break;
+        }
+      }
+      const top = stack.length > 0 ? stack[stack.length - 1] : null;
+      isKey = top === '{' && (prevNonWs === '{' || prevNonWs === ',');
+    } else if (ch === '{') {
+      stack.push('{');
+    } else if (ch === '}') {
+      if (stack.length > 0 && stack[stack.length - 1] === '{') {
+        stack.pop();
+        if (stack.length === 0) {
+          rootCloseIndex = i;
+          break;
+        }
+      }
+    } else if (ch === '[') {
+      stack.push('[');
+    } else if (ch === ']') {
+      if (stack.length > 0 && stack[stack.length - 1] === '[') {
+        stack.pop();
+      }
+    }
+  }
+
+  return {
+    hasOpeningFenceUnclosed,
+    firstBrace,
+    rootCloseIndex,
+    inString,
+    openDepth: stack.length,
+  };
+}
+
+/** True when raw looks like an unfinished JSON object (string-aware; ignores {{char}} inside strings). */
+export function looksLikeTruncatedCardJson(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return true;
+  const info = inspectJsonObjectBounds(raw);
+  if (info.hasOpeningFenceUnclosed) return true;
+  if (info.firstBrace === -1) return true;
+  if (info.inString || info.openDepth > 0) return true;
+  return info.rootCloseIndex === -1;
+}
+
 /** Parse a whole-card JSON object from an AI response with multi-tier repair and fallback. */
-export function parseWholeCardJson(raw: string): { card: Record<string, unknown> | null; parseError: boolean } {
+export function parseWholeCardJson(
+  raw: string,
+  opts?: { rejectTruncated?: boolean },
+): { card: Record<string, unknown> | null; parseError: boolean } {
   if (!raw || typeof raw !== 'string') return { card: null, parseError: true };
+
+  if (opts?.rejectTruncated && looksLikeTruncatedCardJson(raw)) {
+    return { card: null, parseError: true };
+  }
 
   // Step 1: Strip thinking blocks
   let text = stripThinkingBlocks(raw.trim());
@@ -334,12 +458,14 @@ export function parseWholeCardJson(raw: string): { card: Record<string, unknown>
   // Step 2: Strip code fences if present
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) text = fence[1].trim();
+  else if (/^```(?:json)?\s*/i.test(text)) text = text.replace(/^```(?:json)?\s*/i, '').trim();
 
-  // Step 3: Find outermost object bounds
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    text = text.slice(firstBrace, lastBrace + 1);
+  // Step 3: Find outermost object bounds (string-aware so {{char}} macros inside strings never truncate slice)
+  const bounds = inspectJsonObjectBounds(text);
+  if (bounds.firstBrace !== -1) {
+    text = bounds.rootCloseIndex !== -1
+      ? text.slice(bounds.firstBrace, bounds.rootCloseIndex + 1)
+      : text.slice(bounds.firstBrace);
   }
 
   // Tier 1: Direct JSON.parse
@@ -415,28 +541,21 @@ export function sanitizeCardMacros(text: string, fieldName?: string): string {
   if (!text) return text;
   let out = text;
 
-  // Case macros: {{User}} / {{Char}} / mixed → lowercase
-  out = out.replace(/\{\{\s*User\s*\}\}/g, '{{user}}');
-  out = out.replace(/\{\{\s*Char\s*\}\}/g, '{{char}}');
-  out = out.replace(/\{\{\s*USER\s*\}\}/g, '{{user}}');
-  out = out.replace(/\{\{\s*CHAR\s*\}\}/g, '{{char}}');
+  // Case macros: {{User}} / {{Char}} / mixed case → lowercase
+  out = out.replace(/\{\{\s*user\s*\}\}/gi, '{{user}}');
+  out = out.replace(/\{\{\s*char\s*\}\}/gi, '{{char}}');
 
-  // Possessives: {{User's}} / {{user's}} / {{Char's}} → {{user}}'s / {{char}}'s
-  out = out.replace(/\{\{\s*User'?s\s*\}\}/gi, "{{user}}'s");
-  out = out.replace(/\{\{\s*user'?s\s*\}\}/g, "{{user}}'s");
-  out = out.replace(/\{\{\s*Char'?s\s*\}\}/gi, "{{char}}'s");
-  out = out.replace(/\{\{\s*char'?s\s*\}\}/g, "{{char}}'s");
+  // Possessives (straight or curly apostrophe): {{User's}} / {{user's}} / {{Char's}} → {{user}}'s / {{char}}'s
+  out = out.replace(/\{\{\s*user['’]?s\s*\}\}/gi, "{{user}}'s");
+  out = out.replace(/\{\{\s*char['’]?s\s*\}\}/gi, "{{char}}'s");
 
-  // Ban "The User" as a noun phrase
-  out = out.replace(/\bThe User\b/g, '{{user}}');
-  out = out.replace(/\bthe User\b/g, '{{user}}');
-  // Case-insensitive: possessives BEFORE bare "the user"
-  out = out.replace(/\bthe user's\b/gi, "{{user}}'s");
+  // Ban "The User" / "the user" as a noun phrase (possessives BEFORE bare "the user")
+  out = out.replace(/\bthe user['’]s\b/gi, "{{user}}'s");
   out = out.replace(/\bthe user\b/gi, '{{user}}');
 
   // Speaker labels at line start
-  out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');
-  out = out.replace(/(^|\n)\s*Name\s*:/g, '$1{{char}}:');
+  out = out.replace(/(^|\n)\s*User\s*:/gi, '$1{{user}}:');
+  out = out.replace(/(^|\n)\s*Name\s*:/gi, '$1{{char}}:');
 
   // description/personality only: leading "You are" → "{{char}} is"
   if (fieldName === 'description' || fieldName === 'personality') {
@@ -595,4 +714,39 @@ export function applyGenerateFieldResult(
   }
   // Plain string / list path — still sanitize
   return { value: sanitizeFieldText(result, fieldName), slicedFromWholeCard: false };
+}
+
+/**
+ * Sanitize an entire CardData object (request context or export path, R7 / D6).
+ * Preserves multilingual JSON and character_version; fixes macros, speaker labels,
+ * and leading "You are" POV in description/personality.
+ */
+export function sanitizeCardData(card: CardData): CardData {
+  const charName = String(card.name ?? '').trim();
+  const cleanText = (val: string, fieldName: string) =>
+    sanitizeCardMacros(String(val ?? ''), fieldName);
+  return {
+    ...card,
+    name: cleanText(card.name, 'name'),
+    description: cleanText(card.description, 'description'),
+    personality: cleanText(card.personality, 'personality'),
+    scenario: cleanText(card.scenario, 'scenario'),
+    first_mes: cleanText(rewriteSpeakerLabels(card.first_mes, charName), 'first_mes'),
+    mes_example: cleanText(rewriteSpeakerLabels(card.mes_example, charName), 'mes_example'),
+    creator_notes: cleanText(card.creator_notes, 'creator_notes'),
+    system_prompt: cleanText(card.system_prompt, 'system_prompt'),
+    post_history_instructions: cleanText(card.post_history_instructions, 'post_history_instructions'),
+    tags: cleanText(card.tags, 'tags'),
+    creator: cleanText(card.creator, 'creator'),
+    nickname: cleanText(card.nickname, 'nickname'),
+    creator_notes_multilingual: card.creator_notes_multilingual,
+    character_version: card.character_version,
+    source: Array.isArray(card.source) ? card.source.map((s) => cleanText(s, 'source')) : [],
+    group_only_greetings: Array.isArray(card.group_only_greetings)
+      ? card.group_only_greetings.map((s) => cleanText(rewriteSpeakerLabels(s, charName), 'group_only_greetings'))
+      : [],
+    alternate_greetings: Array.isArray(card.alternate_greetings)
+      ? card.alternate_greetings.map((s) => cleanText(rewriteSpeakerLabels(s, charName), 'alternate_greetings'))
+      : [],
+  };
 }

@@ -17,7 +17,7 @@ import { useAiBackendStatus } from "@/hooks/useAiBackend";
 import { consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { WorkbenchCardPicker, NeonSectionDivider, type WorkbenchCardPick } from "@/components/tools/WorkbenchCardPicker";
 import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
-import { withAiKey } from "@/lib/aiKey";
+import { withAiProvider } from "@/lib/aiProvider";
 import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { formatSlotContext, mapCardFieldsToVariables, parsePopulateCardJson } from "@/lib/workbenchCardContext";
 import { loadPromptDraft, savePromptDraft } from "@/lib/promptDraftStorage";
@@ -213,7 +213,7 @@ export const PromptBuilder = () => {
     setGeneratingVar(varName);
     try {
       const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: withAiKey({
+        body: withAiProvider({
           action: "generate-prompt-variable",
           variableName: varName,
           variableDescription: varDef?.description || "",
@@ -243,7 +243,7 @@ export const PromptBuilder = () => {
     setGeneratingAll(true);
     try {
       const { data, error } = await supabase.functions.invoke("venice-ai", {
-        body: withAiKey({
+        body: withAiProvider({
           action: "generate-all-prompt-variables",
           templateId: selectedTemplate.id,
           templateName: selectedTemplate.name,

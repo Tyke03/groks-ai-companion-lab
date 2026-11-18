@@ -1,43 +1,37 @@
 /**
  * Bring-your-own-key (BYOK) compatibility wrapper + access-request helpers.
  *
- * Delegates multi-provider storage/payload merging (Venice, OpenRouter,
- * OneProvider) to `@/lib/aiProvider` while keeping the original OpenRouter
- * helpers intact for existing callers and tests.
+ * Delegates multi-provider BYOK storage and request merging to `@/lib/aiProvider`.
  */
 
 import {
-  AI_KEY_MODEL_STORAGE,
-  AI_KEY_STORAGE,
-  DEFAULT_OPENROUTER_MODEL,
-  clearAiProviderKey,
-  hasAnyByokKey,
-  loadAiProviderSettings,
-  saveAiProviderSettings,
-  withAiProviderSettings,
+  DEFAULT_PROVIDER_MODEL,
+  HOW_TO_GET_KEY_STEPS as PROVIDER_KEY_STEPS,
+  clearAllByok,
+  clearProvider,
+  hasByok,
+  loadByok,
+  maskKey as providerMaskKey,
+  saveByok,
+  withAiProvider,
+  type ByokState,
+  type ModelCatalog,
+  type ModelOption,
+  type ProviderId,
 } from "./aiProvider";
 
 export {
-  AI_KEY_STORAGE,
-  AI_KEY_MODEL_STORAGE,
-  DEFAULT_OPENROUTER_MODEL,
-  type AiProviderId,
-  type AiProviderSettings,
-  type ByokKeys,
-  type CompanionBrief,
+  clearAllByok,
+  clearProvider,
+  hasByok,
+  loadByok,
+  saveByok,
+  withAiProvider,
+  type ByokState,
   type ModelCatalog,
-  type ModelCatalogEntry,
-  type ProviderModelsConfig,
-  clearAiProviderKey,
-  cleanCompanionBrief,
-  emptyCompanionBrief,
-  fetchModelCatalog,
-  hasAnyByokKey,
-  loadAiProviderSettings,
-  loadCachedModelCatalog,
-  saveAiProviderSettings,
-  withAiProviderSettings,
-} from "./aiProvider";
+  type ModelOption,
+  type ProviderId,
+};
 
 /** Where visitors create a free OpenRouter key. */
 export const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";
@@ -59,35 +53,38 @@ export interface StoredAiKey {
 }
 
 export function loadAiKey(): StoredAiKey {
-  const settings = loadAiProviderSettings();
+  const state = loadByok();
   return {
-    key: settings.byok.openrouter,
-    model: settings.models.openrouter[0] || DEFAULT_OPENROUTER_MODEL,
+    key: state.keys.openrouter || "",
+    model: state.models.openrouter || DEFAULT_PROVIDER_MODEL.openrouter,
   };
 }
 
 export function saveAiKey(input: { key: string; model?: string }): StoredAiKey {
+  const current = loadByok();
   const key = (input.key || "").trim();
-  const model = (input.model || "").trim() || DEFAULT_OPENROUTER_MODEL;
-  const saved = saveAiProviderSettings({
-    byok: { openrouter: key },
-    models: { openrouter: [model] },
+  const model = (input.model || "").trim() || DEFAULT_PROVIDER_MODEL.openrouter;
+  const nextKeys = { ...current.keys };
+  if (key) nextKeys.openrouter = key;
+  else delete nextKeys.openrouter;
+  const saved = saveByok({
+    ...current,
+    keys: nextKeys,
+    models: { ...current.models, openrouter: model },
   });
   return {
-    key: saved.byok.openrouter,
-    model: saved.models.openrouter[0] || DEFAULT_OPENROUTER_MODEL,
+    key: saved.keys.openrouter || "",
+    model: saved.models.openrouter || DEFAULT_PROVIDER_MODEL.openrouter,
   };
 }
 
 export function clearAiKey(): void {
-  clearAiProviderKey("openrouter");
+  clearProvider("openrouter");
 }
 
 /** Mask a key for display: sk-or-v1…c45 */
 export function maskKey(key: string): string {
-  const k = (key || "").trim();
-  if (k.length <= 10) return k ? "••••" : "";
-  return `${k.slice(0, 8)}…${k.slice(-3)}`;
+  return providerMaskKey(key);
 }
 
 /** mailto: link that pre-fills an access request. */
@@ -143,12 +140,7 @@ export async function sendAccessRequest(input: {
 }
 
 /** Short steps shown next to the key field. */
-export const HOW_TO_GET_KEY_STEPS = [
-  "Create a free account at openrouter.ai.",
-  "Open Keys and click Create Key.",
-  "Copy the key — it starts with sk-or-v1-.",
-  "Paste it here and Save. It stays in this browser only.",
-];
+export const HOW_TO_GET_KEY_STEPS = PROVIDER_KEY_STEPS.openrouter;
 
 /**
  * Merge stored 3-provider BYOK keys and model preferences into an edge-function
@@ -166,11 +158,11 @@ export function withAiKey(body: Record<string, unknown>, stored?: StoredAiKey): 
       openrouterKey: key,
     };
   }
-  return withAiProviderSettings(body);
+  return withAiProvider(body);
 }
 
 /** True when any client BYOK key is present (keeps AI enabled with no server key). */
 export function hasAiKey(stored?: StoredAiKey): boolean {
   if (stored) return (stored.key || "").trim().length > 0;
-  return hasAnyByokKey();
+  return hasByok();
 }

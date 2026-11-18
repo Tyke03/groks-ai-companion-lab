@@ -7,7 +7,7 @@ import { PlatformCombobox } from "@/components/tools/PlatformCombobox";
 import { chatbots } from "@/data/chatbots";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiBackendStatus } from "@/hooks/useAiBackend";
-import { withAiKey } from "@/lib/aiKey";
+import { withAiProvider } from "@/lib/aiProvider";
 import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { edgeInvokeError } from "@/lib/llmErrors";
 import { WorkbenchCardPicker, NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
@@ -161,7 +161,7 @@ export const DocConsolidator = () => {
     try {
       const { data, error } = await withTimeout(
         supabase.functions.invoke("venice-ai", {
-          body: withAiKey({
+          body: withAiProvider({
             action: "fetch-url",
             url: docUrl.trim(),
           }),
@@ -228,7 +228,7 @@ export const DocConsolidator = () => {
     try {
       const { data, error } = await withTimeout(
         supabase.functions.invoke("venice-ai", {
-          body: withAiKey({
+          body: withAiProvider({
             action: "consolidate",
             serviceName: effectiveName,
             text: inputText,

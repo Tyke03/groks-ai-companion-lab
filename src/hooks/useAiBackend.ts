@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
-import { hasAnyByokKey } from "@/lib/aiProvider";
+import { hasByok } from "@/lib/aiProvider";
 
 export type AiBackendStatus = "checking" | "available" | "unavailable";
 
@@ -31,7 +31,7 @@ export interface AiBackendState {
  * explanation only when neither the shared backend nor a visitor key is usable.
  */
 export function useAiBackendStatus(): AiBackendState {
-  const [hasByok, setHasByok] = useState<boolean>(() => hasAnyByokKey());
+  const [visitorHasByok, setVisitorHasByok] = useState<boolean>(() => hasByok());
   const [hasServerKey, setHasServerKey] = useState(false);
   const [providers, setProviders] = useState<AiBackendProviders | undefined>(undefined);
   const [status, setStatus] = useState<AiBackendStatus>("checking");
@@ -39,7 +39,7 @@ export function useAiBackendStatus(): AiBackendState {
   const [nonce, setNonce] = useState(0);
 
   const refresh = useCallback(() => {
-    setHasByok(hasAnyByokKey());
+    setVisitorHasByok(hasByok());
     setNonce((n) => n + 1);
   }, []);
 
@@ -48,8 +48,6 @@ export function useAiBackendStatus(): AiBackendState {
     setStatus("checking");
     setReason(null);
 
-    // Never construct a request against a missing/malformed Supabase config.
-    // BYOK cannot help here: the edge function that proxies the key is unreachable.
     if (!isSupabaseConfigured || !supabase) {
       setHasServerKey(false);
       setProviders(undefined);
@@ -72,9 +70,11 @@ export function useAiBackendStatus(): AiBackendState {
         const data = result.data as {
           ok?: boolean;
           reason?: string;
+          shared?: AiBackendProviders;
           providers?: AiBackendProviders;
         } | null;
-        if (data?.providers) setProviders(data.providers);
+        const sharedProviders = data?.shared ?? data?.providers;
+        if (sharedProviders) setProviders(sharedProviders);
 
         if (!result.error && data?.ok) {
           setHasServerKey(true);
@@ -83,8 +83,7 @@ export function useAiBackendStatus(): AiBackendState {
           return;
         }
         setHasServerKey(false);
-        // With a visitor key, AI still works even when the Hub has no server key.
-        if (hasByok) {
+        if (visitorHasByok) {
           setStatus("available");
           setReason(null);
         } else {
@@ -98,7 +97,7 @@ export function useAiBackendStatus(): AiBackendState {
       } catch (error) {
         if (cancelled) return;
         setHasServerKey(false);
-        if (hasByok) {
+        if (visitorHasByok) {
           setStatus("available");
           setReason(null);
         } else {
@@ -112,7 +111,7 @@ export function useAiBackendStatus(): AiBackendState {
     return () => {
       cancelled = true;
     };
-  }, [hasByok, nonce]);
+  }, [visitorHasByok, nonce]);
 
-  return { status, reason, hasByok, hasServerKey, providers, refresh };
+  return { status, reason, hasByok: visitorHasByok, hasServerKey, providers, refresh };
 }

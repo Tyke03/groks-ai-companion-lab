@@ -41,11 +41,27 @@ describe("cardAiFormat", () => {
 
   it("parses alternate greetings without splitting on commas", () => {
     const items = parseAiStringList(
-      '*She grins* "Hello, friend, welcome."\n*She bows* "Another opening, with commas."\n*She waves* "Third greeting."',
+      '*She grins* "Hello, friend, welcome."\n\n*She bows* "Another opening, with commas."\n\n*She waves* "Third greeting."',
       { max: 3 },
     );
     expect(items).toHaveLength(3);
     expect(items[0]).toContain("Hello, friend, welcome.");
+  });
+
+  it("keeps internal newlines intact across three multi-line greetings (F1)", () => {
+    const raw = [
+      "*She steps onto the balcony.*\n\"Rough night, {{user}}?\"",
+      "*She sets two mugs on the counter.*\n\"Coffee first. Questions after.\"",
+      "*Rain taps against the glass.*\n\"Don't look at me like that.\"",
+    ].join("\n\n");
+    const items = parseAiStringList(raw, { max: 3 });
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item).toContain("\n");
+    }
+    expect(items[0]).toContain("Rough night");
+    expect(items[1]).toContain("Coffee first");
+    expect(items[2]).toContain("Don't look at me");
   });
 
   it("accepts JSON array alternate greetings", () => {

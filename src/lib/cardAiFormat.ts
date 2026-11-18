@@ -100,11 +100,17 @@ export function parseAiStringList(value: unknown, opts?: { max?: number }): stri
       }
     }
     if (items.length === 0) {
-      // Split on blank lines or single newlines, never on commas (greetings contain commas).
-      items = trimmed
-        .split(/\n\s*\n|\n/)
+      const byBlankLine = trimmed
+        .split(/\n\s*\n/)
         .map((s) => normalizeAiMultiline(s))
         .filter(Boolean);
+      if (byBlankLine.length > 1) {
+        items = byBlankLine;
+      } else if (/^\s*<START>/m.test(trimmed)) {
+        items = trimmed.split(/^\s*<START>\s*$/m).map((s) => normalizeAiMultiline(s)).filter(Boolean);
+      } else {
+        items = [normalizeAiMultiline(trimmed)];
+      }
     }
   }
 

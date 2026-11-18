@@ -13,6 +13,7 @@ import {
   type CardFormat,
   type PreservedData,
 } from "./cardTypes";
+import type { CompanionBrief } from "./cardGeneratePipeline";
 
 export const CARDS_STORAGE_KEY = "ai-companion-hub-cards";
 export const LEGACY_DRAFT_KEY = "ai-companion-hub-card-draft";
@@ -29,6 +30,8 @@ export interface StoredCardSlot {
   specVersion: SpecVersion;
   importedFormat: CardFormat | null;
   importWarnings: string[];
+  contentLevel?: 1 | 2 | 3 | 4 | 5;
+  brief?: CompanionBrief;
 }
 
 export interface CardLibrary {
@@ -81,6 +84,8 @@ export function createEmptySlot(overrides: Partial<StoredCardSlot> = {}): Stored
     specVersion: overrides.specVersion ?? "v2",
     importedFormat: overrides.importedFormat ?? null,
     importWarnings: overrides.importWarnings ?? [],
+    ...(overrides.contentLevel !== undefined ? { contentLevel: overrides.contentLevel } : {}),
+    ...(overrides.brief !== undefined ? { brief: overrides.brief } : {}),
   };
 }
 
@@ -99,6 +104,30 @@ function parseSlot(raw: unknown): StoredCardSlot | null {
   const importWarnings = Array.isArray(raw.importWarnings)
     ? raw.importWarnings.filter((w): w is string => typeof w === "string")
     : [];
+  const rawLevel = Number(raw.contentLevel);
+  const contentLevel =
+    rawLevel === 1 || rawLevel === 2 || rawLevel === 3 || rawLevel === 4 || rawLevel === 5
+      ? (rawLevel as 1 | 2 | 3 | 4 | 5)
+      : undefined;
+  let brief: CompanionBrief | undefined;
+  if (isRecord(raw.brief)) {
+    const parsedBrief: CompanionBrief = {};
+    const strKeys: (keyof Omit<CompanionBrief, "contentLevel">)[] = [
+      "setting", "role", "agePresentation", "tone", "replyLength",
+      "voiceSample", "bannedPhrases", "relationship", "pov", "language", "mustInclude",
+    ];
+    for (const k of strKeys) {
+      if (typeof raw.brief[k] === "string") parsedBrief[k] = raw.brief[k] as string;
+    }
+    const bLvl = Number(raw.brief.contentLevel);
+    if (bLvl === 1 || bLvl === 2 || bLvl === 3 || bLvl === 4 || bLvl === 5) {
+      parsedBrief.contentLevel = bLvl as 1 | 2 | 3 | 4 | 5;
+    } else if (contentLevel !== undefined) {
+      parsedBrief.contentLevel = contentLevel;
+    }
+    brief = parsedBrief;
+  }
+  const effectiveLevel = contentLevel ?? brief?.contentLevel;
   return {
     id: typeof raw.id === "string" && raw.id ? raw.id : newCardId(),
     label: typeof raw.label === "string" && raw.label.trim() ? raw.label : labelForCard(card),
@@ -108,6 +137,8 @@ function parseSlot(raw: unknown): StoredCardSlot | null {
     specVersion,
     importedFormat,
     importWarnings,
+    ...(effectiveLevel !== undefined ? { contentLevel: effectiveLevel } : {}),
+    ...(brief !== undefined ? { brief } : {}),
   };
 }
 

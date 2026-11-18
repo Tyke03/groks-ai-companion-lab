@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers, Link2, ChevronDown, ChevronRight, ListOrdered } from "lucide-react";
+import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers, Link2, ChevronDown, ChevronRight, ListOrdered, Square } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { embedCardInPng, extractCardFromPng } from "@/lib/pngChunk";
@@ -32,7 +32,17 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
-import { normalizeAiMultiline, parseAiStringList, applyGenerateFieldResult, normalizeWholeCardToHub, sanitizeFieldText, sanitizeCardMacros, sanitizeCardData } from "@/lib/cardAiFormat";
+import { normalizeWholeCardToHub, sanitizeCardData } from "@/lib/cardAiFormat";
+import { FIELD_HINTS, ARRAY_FIELDS } from "@/lib/cardFieldMeta";
+import {
+  runStagedGeneration,
+  applyFieldResult,
+  seedStrength,
+  type CompanionBrief,
+  type FieldOutcome,
+} from "@/lib/cardGeneratePipeline";
+import { providerLabel, isByokProvider } from "@/lib/providerLabel";
+import { contentLevelLabels, contentLevelColors, type ContentLevel } from "@/data/chatbots";
 import {
   createNewCard,
   deleteCard,
@@ -48,9 +58,8 @@ import { estimateCardTokens } from "@/lib/cardTokens";
 import { appendBridgeToNotes, consumeWorkbenchBridge } from "@/lib/workbenchBridges";
 import { NeonSectionDivider } from "@/components/tools/WorkbenchCardPicker";
 import { RefinePopover } from "@/components/tools/RefinePopover";
-import { formatLlmCascadeError } from "@/lib/llmErrors";
-import { withAiKey } from "@/lib/aiKey";
-import { cleanCompanionBrief, emptyCompanionBrief, type CompanionBrief } from "@/lib/aiProvider";
+import { edgeInvokeError, formatLlmCascadeError } from "@/lib/llmErrors";
+import { withAiProvider, loadByok } from "@/lib/aiProvider";
 import { AiKeySettings } from "@/components/tools/AiKeySettings";
 import { convertImageFileToPng, deletePortrait, loadPortrait, savePortrait } from "@/lib/portraitStorage";
 import { isLorebookBoundToCard, loadLorebook, lorebookHasContent, toCharacterBook } from "@/lib/lorebookStorage";
@@ -92,94 +101,22 @@ const fieldCurrentValue = (value: unknown): string => {
   return value == null ? "" : String(value);
 };
 
-const BRIEF_STORAGE_KEY = "ai-companion-hub-author-brief-v1";
-
-function loadStoredBrief(): CompanionBrief {
-  if (typeof window === "undefined" || !window.localStorage) return emptyCompanionBrief();
-  try {
-    const raw = window.localStorage.getItem(BRIEF_STORAGE_KEY);
-    if (!raw) return emptyCompanionBrief();
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return emptyCompanionBrief();
-    return { ...emptyCompanionBrief(), ...parsed };
-  } catch {
-    return emptyCompanionBrief();
+function sanitizeBrief(raw: unknown, fallbackLevel?: ContentLevel): CompanionBrief {
+  const b = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const out: CompanionBrief = {};
+  const keys: (keyof Omit<CompanionBrief, "contentLevel">)[] = [
+    "setting", "role", "agePresentation", "tone", "replyLength",
+    "voiceSample", "bannedPhrases", "relationship", "pov", "language", "mustInclude",
+  ];
+  for (const k of keys) {
+    if (typeof b[k] === "string") out[k] = b[k] as string;
   }
+  const lvl = Number(b.contentLevel ?? fallbackLevel);
+  if (lvl === 1 || lvl === 2 || lvl === 3 || lvl === 4 || lvl === 5) {
+    out.contentLevel = lvl as ContentLevel;
+  }
+  return out;
 }
-
-function applyFieldResultToCard(
-  prev: CardData,
-  fieldName: keyof CardData,
-  rawResult: unknown,
-  arrayFields: Set<string>,
-): CardData {
-  const { value } = applyGenerateFieldResult(String(fieldName), rawResult);
-  const sanitized = sanitizeFieldText(value, String(fieldName));
-  const next = { ...prev };
-  if (arrayFields.has(fieldName)) {
-    const max = fieldName === "alternate_greetings" ? 3 : undefined;
-    (next as Record<string, unknown>)[fieldName] = parseAiStringList(sanitized, { max }).map((s) =>
-      sanitizeCardMacros(s, String(fieldName)),
-    );
-  } else if (fieldName === "mes_example" || fieldName === "first_mes") {
-    (next as Record<string, unknown>)[fieldName] = sanitizeCardMacros(
-      normalizeAiMultiline(String(sanitized ?? "")),
-      String(fieldName),
-    );
-  } else {
-    const asStr = typeof sanitized === "string" ? sanitized : sanitized == null ? "" : String(sanitized);
-    (next as Record<string, unknown>)[fieldName] = sanitizeCardMacros(asStr, String(fieldName));
-  }
-  return next;
-}
-
-
-/** Prefer edge JSON `{ error }` over opaque Supabase "non-2xx" invoke messages. */
-const edgeInvokeError = async (error: unknown, data: unknown): Promise<string> => {
-  if (data && typeof data === "object" && data !== null && "error" in data) {
-    const e = (data as { error?: unknown }).error;
-    if (e != null && String(e).trim()) return String(e);
-  }
-  const ctx = error && typeof error === "object" && error !== null && "context" in error
-    ? (error as { context?: unknown }).context
-    : undefined;
-  if (ctx && typeof ctx === "object" && ctx !== null && "json" in ctx && typeof (ctx as { json: () => Promise<unknown> }).json === "function") {
-    try {
-      const body = await (ctx as { json: () => Promise<unknown> }).json();
-      if (body && typeof body === "object" && body !== null && "error" in body) {
-        const e = (body as { error?: unknown }).error;
-        if (e != null && String(e).trim()) return String(e);
-      }
-    } catch {
-      // ignore body parse failures
-    }
-  }
-  const msg = errMsg(error);
-  return msg || "Edge function failed";
-};
-
-/** Fields whose value is an array of strings (rendered with list editors) */
-const ARRAY_FIELDS = new Set(["source", "group_only_greetings", "alternate_greetings"]);
-
-const fieldDescriptions: Record<string, string> = {
-  name: "A memorable character name",
-  description: "Appearance, background, abilities, and key traits (2-4 paragraphs)",
-  personality: "Core personality traits, behavioral patterns, and quirks",
-  scenario: "The setting/situation where the user meets this character",
-  first_mes: "The character's opening message with actions and dialogue",
-  mes_example: "Three SillyTavern <START> blocks using {{user}}: / {{char}}: labels, *actions*, and richer multi-line exchanges",
-  creator_notes: "Notes for users about how to best use this character",
-  system_prompt: "Instructions for the AI on how to roleplay this character",
-  post_history_instructions: "Brief reminder inserted after chat history",
-  tags: "Comma-separated tags for categorization",
-  creator: "Creator name or handle",
-  nickname: "Alternative name or alias for the character",
-  creator_notes_multilingual: "Creator notes in other languages (JSON: {\"lang\": \"notes\"})",
-  source: "Source URLs or IDs",
-  group_only_greetings: "Greetings only used in group chats",
-  alternate_greetings: "Alternate opening messages (V2 spec field)",
-  character_version: "Version of this character card",
-};
 
 const recommendedMax: Record<string, number> = {
   description: 2000, personality: 1000, scenario: 1000, first_mes: 2000, mes_example: 5000,
@@ -206,11 +143,13 @@ function TagChipEditor({
   onChange,
   placeholder,
   id,
+  inputAriaLabel = "Add tag",
 }: {
   value: string;
   onChange: (next: string) => void;
   placeholder: string;
   id: string;
+  inputAriaLabel?: string;
 }) {
   const tags = splitTagList(value);
   const [draft, setDraft] = useState("");
@@ -265,7 +204,7 @@ function TagChipEditor({
           }
         }}
         onBlur={() => { if (draft.trim()) commit(draft); }}
-        aria-label="Add tag"
+        aria-label={inputAriaLabel}
       />
       <p className="text-[11px] text-muted-foreground">Chips for editing; export still uses comma-separated tags.</p>
     </div>
@@ -346,10 +285,13 @@ export const CharacterCardBuilder = () => {
   const [copied, setCopied] = useState(false);
   const [generatingField, setGeneratingField] = useState<string | null>(null);
   const [generatingAll, setGeneratingAll] = useState(false);
-  const [generatingStaged, setGeneratingStaged] = useState(false);
-  const [stagedProgress, setStagedProgress] = useState<string | null>(null);
+  const [generatingOneShot, setGeneratingOneShot] = useState(false);
+  const [fieldProvider, setFieldProvider] = useState<Partial<Record<keyof CardData, string>>>({});
+  const [runProviders, setRunProviders] = useState<string[]>([]);
+  const [runUsedFallback, setRunUsedFallback] = useState(false);
+  const abortRef = useRef<{ aborted: boolean } | null>(null);
   const [showBrief, setShowBrief] = useState(false);
-  const [brief, setBrief] = useState<CompanionBrief>(() => loadStoredBrief());
+  const [brief, setBrief] = useState<CompanionBrief>(() => sanitizeBrief(activeSlot.brief, activeSlot.contentLevel));
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -420,14 +362,19 @@ export const CharacterCardBuilder = () => {
   }, []);
 
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.localStorage) return;
-    try {
-      window.localStorage.setItem(BRIEF_STORAGE_KEY, JSON.stringify(brief));
-    } catch {
-      // ignore storage errors
+  const briefFromState = (): CompanionBrief => {
+    const out: CompanionBrief = {};
+    const keys: (keyof Omit<CompanionBrief, "contentLevel">)[] = [
+      "setting", "role", "agePresentation", "tone", "replyLength",
+      "voiceSample", "bannedPhrases", "relationship", "pov", "language", "mustInclude",
+    ];
+    for (const k of keys) {
+      const v = brief[k]?.trim();
+      if (v) out[k] = v;
     }
-  }, [brief]);
+    if (brief.contentLevel) out.contentLevel = brief.contentLevel;
+    return out;
+  };
 
   // Persist the active slot whenever editor state changes (multi-card safe).
   useEffect(() => {
@@ -438,11 +385,13 @@ export const CharacterCardBuilder = () => {
         specVersion,
         importedFormat,
         importWarnings,
+        contentLevel: brief.contentLevel,
+        brief,
       });
       saveCardLibrary(next);
       return next;
     });
-  }, [card, preserved, specVersion, importedFormat, importWarnings]);
+  }, [card, preserved, specVersion, importedFormat, importWarnings, brief]);
 
   const pngPreviewUrl = useMemo(() => pngFile ? URL.createObjectURL(pngFile) : null, [pngFile]);
 
@@ -617,6 +566,8 @@ export const CharacterCardBuilder = () => {
       specVersion,
       importedFormat,
       importWarnings,
+      contentLevel: brief.contentLevel,
+      brief,
     });
     const next = mutator(flushed);
     saveCardLibrary(next);
@@ -627,6 +578,10 @@ export const CharacterCardBuilder = () => {
     setSpecVersion(slot.specVersion);
     setImportedFormat(slot.importedFormat);
     setImportWarnings(slot.importWarnings);
+    setBrief(sanitizeBrief(slot.brief, slot.contentLevel));
+    setFieldProvider({});
+    setRunProviders([]);
+    setRunUsedFallback(false);
   };
 
   const handleNewCard = () => {
@@ -649,6 +604,13 @@ export const CharacterCardBuilder = () => {
     toast({ title: "Removed", description: "Card removed from the local list." });
   };
 
+  const recordProvidersFromRun = (usedRaw: string[]) => {
+    if (usedRaw.length === 0) return;
+    const expectedPreferred = loadByok().preferredProvider ?? "venice";
+    setRunProviders(usedRaw);
+    setRunUsedFallback(usedRaw.some((p) => p.replace(/-byok$/, "") !== expectedPreferred));
+  };
+
   const handleGenerateField = async (fieldName: keyof CardData, notes?: string) => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
@@ -657,25 +619,22 @@ export const CharacterCardBuilder = () => {
     const refinementNotes = typeof notes === "string" ? notes.trim() : "";
     const useRefine = refinementNotes.length > 0;
     const sanitizedCard = sanitizeCardData(card);
-    const cleanedBrief = cleanCompanionBrief(brief);
+    const activeBrief = briefFromState();
     setGeneratingField(fieldName);
     try {
       const body: Record<string, unknown> = {
         action: "generate-field",
         fieldName,
-        fieldDescription: fieldDescriptions[fieldName],
+        fieldDescription: FIELD_HINTS[fieldName],
         existingFields: sanitizedCard,
         specVersion,
-        keywords: Array.isArray(sanitizedCard[fieldName])
-          ? (sanitizedCard[fieldName] as string[]).join(", ")
-          : sanitizedCard[fieldName] || undefined,
       };
-      if (cleanedBrief) body.brief = cleanedBrief;
+      if (Object.keys(activeBrief).length > 0) body.brief = activeBrief;
       if (useRefine) {
         body.refinementNotes = refinementNotes;
         body.currentValue = fieldCurrentValue(sanitizedCard[fieldName]);
       }
-      const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
+      const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiProvider(body) });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error) {
         toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
@@ -692,7 +651,10 @@ export const CharacterCardBuilder = () => {
         return;
       }
       if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
-        setCard((prev) => applyFieldResultToCard(prev, fieldName, data.result, ARRAY_FIELDS));
+        setCard((prev) => sanitizeCardData(applyFieldResult(prev, fieldName, data.result)));
+        if (data?.provider) {
+          setFieldProvider((prev) => ({ ...prev, [fieldName]: String(data.provider) }));
+        }
         if (useRefine || data?.refined) {
           toast({ title: "Refined", description: `Updated ${String(fieldName)} from your notes.` });
         }
@@ -704,101 +666,59 @@ export const CharacterCardBuilder = () => {
     }
   };
 
-  const handleGenerateStaged = async (notes?: string) => {
-    if (!supabase) {
-      toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
-      return;
-    }
-    const refinementNotes = typeof notes === "string" ? notes.trim() : "";
-    const useRefine = refinementNotes.length > 0;
-    const cleanedBrief = cleanCompanionBrief(brief);
-
-    let workingCard = sanitizeCardData(card);
-    const stages: { label: string; fields: (keyof CardData)[] }[] = [
-      {
-        label: "Stage 1/3",
-        fields: [
-          ...(workingCard.name.trim() ? [] : (["name"] as (keyof CardData)[])),
-          "description",
-          "personality",
-          "scenario",
-        ],
-      },
-      {
-        label: "Stage 2/3",
-        fields: ["first_mes", "mes_example"],
-      },
-      {
-        label: "Stage 3/3",
-        fields: [
-          "system_prompt",
-          "post_history_instructions",
-          "creator_notes",
-          "tags",
-          "alternate_greetings",
-        ],
-      },
-    ];
-
-    setGeneratingStaged(true);
-    let completed = 0;
-    let lastProvider = "";
-    try {
-      for (const stage of stages) {
-        for (const fieldName of stage.fields) {
-          setStagedProgress(`${stage.label}: ${String(fieldName)}…`);
-          const sanitizedContext = sanitizeCardData(workingCard);
-          const body: Record<string, unknown> = {
-            action: "generate-field",
-            fieldName,
-            fieldDescription: fieldDescriptions[fieldName],
-            existingFields: sanitizedContext,
-            specVersion,
-          };
-          if (cleanedBrief) body.brief = cleanedBrief;
-          if (useRefine) {
-            body.refinementNotes = refinementNotes;
-            body.currentValue = fieldCurrentValue(sanitizedContext[fieldName]);
-          }
-          const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
-          if (error) throw new Error(await edgeInvokeError(error, data));
-          if (data?.error) throw new Error(String(data.error));
-          if (data?.parseError) {
-            throw new Error(String(data?.error || `Failed to parse ${String(fieldName)}.`));
-          }
-          if (data?.provider) lastProvider = String(data.provider);
-          if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
-            workingCard = applyFieldResultToCard(workingCard, fieldName, data.result, ARRAY_FIELDS);
-            setCard(workingCard);
-            completed += 1;
-          }
-        }
-      }
-      toast({
-        title: useRefine ? "Staged refine complete" : "Staged generation complete",
-        description: `Updated ${completed} fields across 3 stages${lastProvider ? ` via ${lastProvider}` : ""}.`,
-      });
-    } catch (err) {
-      toast({
-        title: completed > 0 ? `Stopped after ${completed} field(s)` : "Staged generation failed",
-        description: formatLlmCascadeError(errMsg(err) || "Failed during staged generation."),
-        variant: "destructive",
-      });
-    } finally {
-      setGeneratingStaged(false);
-      setStagedProgress(null);
-    }
-  };
-
   const handleGenerateAll = async (notes?: string) => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
       return;
     }
+    setGeneratingAll(true);
+    setRunProviders([]);
+    setRunUsedFallback(false);
+    const control = { aborted: false };
+    abortRef.current = control;
+    try {
+      const { card: next, outcomes, aborted } = await runStagedGeneration({
+        card: sanitizeCardData(card),
+        brief: briefFromState(),
+        specVersion,
+        protectExisting: !notes,
+        control,
+        onFieldStart: (f) => setGeneratingField(String(f)),
+        onFieldDone: (o: FieldOutcome) => {
+          if (o.status === "filled" && o.provider) {
+            setFieldProvider((prev) => ({ ...prev, [o.field]: o.provider }));
+          }
+        },
+      });
+      setCard(sanitizeCardData(next));
+      const filledOutcomes = outcomes.filter((o) => o.status === "filled");
+      const usedRaw = filledOutcomes.map((o) => o.provider).filter((p): p is string => !!p);
+      recordProvidersFromRun(usedRaw);
+      const filled = filledOutcomes.length;
+      toast({
+        title: aborted ? "Stopped" : "Card drafted",
+        description: `${filled}/${outcomes.length} fields written.`,
+      });
+    } catch (err) {
+      toast({ title: "Error", description: formatLlmCascadeError(errMsg(err)), variant: "destructive" });
+    } finally {
+      abortRef.current = null;
+      setGeneratingField(null);
+      setGeneratingAll(false);
+    }
+  };
+
+  const handleGenerateOneShot = async (notes?: string) => {
+    if (!supabase) {
+      toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
+      return;
+    }
     const refinementNotes = typeof notes === "string" ? notes.trim() : "";
     const useRefine = refinementNotes.length > 0;
-    const cleanedBrief = cleanCompanionBrief(brief);
-    setGeneratingAll(true);
+    const activeBrief = briefFromState();
+    setGeneratingOneShot(true);
+    setRunProviders([]);
+    setRunUsedFallback(false);
     try {
       const body: Record<string, unknown> = {
         action: "generate-all",
@@ -806,9 +726,9 @@ export const CharacterCardBuilder = () => {
         generationMode: "default",
         specVersion,
       };
-      if (cleanedBrief) body.brief = cleanedBrief;
+      if (Object.keys(activeBrief).length > 0) body.brief = activeBrief;
       if (useRefine) body.refinementNotes = refinementNotes;
-      const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiKey(body) });
+      const { data, error } = await supabase.functions.invoke("venice-ai", { body: withAiProvider(body) });
       if (error) throw new Error(await edgeInvokeError(error, data));
       if (data?.error && !data?.result) {
         toast({ title: "Error", description: formatLlmCascadeError(data.error), variant: "destructive" });
@@ -817,26 +737,23 @@ export const CharacterCardBuilder = () => {
       if (data?.result && typeof data.result === "object" && !data.parseError) {
         const flatResult = normalizeWholeCardToHub(data.result as Record<string, unknown>);
         setCard((prev) => {
-          const updated = { ...prev };
+          let updated = { ...prev };
           for (const [key, value] of Object.entries(flatResult)) {
             if (key in updated) {
-              const record = updated as Record<string, unknown>;
-              if (ARRAY_FIELDS.has(key)) {
-                const max = key === "alternate_greetings" ? 3 : undefined;
-                record[key] = parseAiStringList(value, { max }).map((s) => sanitizeCardMacros(s, key));
-              } else if (key === "mes_example" || key === "first_mes") {
-                record[key] = sanitizeCardMacros(normalizeAiMultiline(String(value ?? "")), key);
-              } else if (typeof value === "string") {
-                record[key] = sanitizeCardMacros(value, key);
-              } else if (Array.isArray(value)) {
-                record[key] = sanitizeCardMacros(value.map(String).join(", "), key);
-              } else if (value != null) {
-                record[key] = sanitizeCardMacros(String(value), key);
-              }
+              updated = applyFieldResult(updated, key as keyof CardData, value);
             }
           }
           return sanitizeCardData(updated);
         });
+        if (data?.provider) {
+          const p = String(data.provider);
+          recordProvidersFromRun([p]);
+          const stamped: Partial<Record<keyof CardData, string>> = {};
+          for (const key of Object.keys(flatResult)) {
+            stamped[key as keyof CardData] = p;
+          }
+          setFieldProvider((prev) => ({ ...prev, ...stamped }));
+        }
         toast({
           title: useRefine || data?.refined ? "Refined" : "Generated",
           description: useRefine || data?.refined
@@ -855,7 +772,7 @@ export const CharacterCardBuilder = () => {
     } catch (err) {
       toast({ title: "Error", description: formatLlmCascadeError(errMsg(err) || "Failed to generate."), variant: "destructive" });
     } finally {
-      setGeneratingAll(false);
+      setGeneratingOneShot(false);
     }
   };
 
@@ -943,6 +860,9 @@ export const CharacterCardBuilder = () => {
     setImportedFormat(null);
     setImportWarnings([]);
     setPngFile(null);
+    setFieldProvider({});
+    setRunProviders([]);
+    setRunUsedFallback(false);
     void deletePortrait(library.activeId);
     toast({ title: "Cleared", description: "Active card fields and portrait reset. Other saved cards are unchanged." });
   };
@@ -1182,28 +1102,50 @@ export const CharacterCardBuilder = () => {
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
-            onClick={() => void handleGenerateStaged()}
-            disabled={generatingStaged || generatingAll || generatingField !== null || aiUnavailable}
+            onClick={() => void handleGenerateAll()}
+            disabled={generatingAll || generatingOneShot || generatingField !== null || aiUnavailable}
             data-testid="generate-staged-button"
           >
-            {generatingStaged ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListOrdered className="h-4 w-4" />}
-            {stagedProgress ? stagedProgress : "Generate (Staged)"}
+            {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListOrdered className="h-4 w-4" />}
+            {generatingAll
+              ? generatingField
+                ? `Drafting ${generatingField}…`
+                : "Drafting..."
+              : "Generate (Staged)"}
           </Button>
+          {generatingAll && (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => { if (abortRef.current) abortRef.current.aborted = true; }}
+              data-testid="abort-generate-button"
+            >
+              <Square className="h-3.5 w-3.5" /> Abort
+            </Button>
+          )}
+          <span
+            className="inline-flex items-center rounded-md border border-border bg-secondary/60 px-2 py-1 text-xs text-muted-foreground tabular-nums"
+            title="How much steering signal the Companion Brief provides (0–100%)"
+            data-testid="seed-strength-badge"
+          >
+            Seed: {seedStrength(brief)}%
+          </span>
           <Button
             variant="outline"
-            onClick={() => void handleGenerateAll()}
-            disabled={generatingAll || generatingStaged || generatingField !== null || aiUnavailable}
+            onClick={() => void handleGenerateOneShot()}
+            disabled={generatingOneShot || generatingAll || generatingField !== null || aiUnavailable}
             data-testid="generate-all-oneshot-button"
           >
-            {generatingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {generatingAll ? "Generating..." : "One-Shot Gen All"}
+            {generatingOneShot ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {generatingOneShot ? "Generating..." : "One-Shot Gen All"}
           </Button>
           <RefinePopover
             compact={false}
             label="Refine All"
-            disabled={generatingAll || generatingStaged || aiUnavailable || generatingField !== null}
-            loading={generatingAll}
-            onRefine={(notes) => void handleGenerateAll(notes)}
+            disabled={generatingOneShot || generatingAll || aiUnavailable || generatingField !== null}
+            loading={generatingOneShot}
+            onRefine={(notes) => void handleGenerateOneShot(notes)}
             data-testid="refine-all"
           />
           <Button
@@ -1214,7 +1156,7 @@ export const CharacterCardBuilder = () => {
             data-testid="companion-brief-toggle"
           >
             {showBrief ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            Author Brief
+            Companion Brief
           </Button>
           <Button variant="outline" size="icon" onClick={() => setShowGenerationSettings((value) => !value)} aria-label="Generation settings" title="Generation settings"><Settings2 className="h-4 w-4" /></Button>
         </div>
@@ -1237,83 +1179,237 @@ export const CharacterCardBuilder = () => {
         </AlertDialog>
       </div>
 
+      {runProviders.length > 0 && (
+        <div
+          className="rounded-lg border border-border bg-secondary/40 px-4 py-2.5 text-xs space-y-1"
+          role="status"
+          data-testid="run-provider-summary"
+        >
+          <p className="font-medium text-foreground">
+            Served by {Array.from(new Set(runProviders.map((p) => providerLabel(p)))).join(", ")}.
+          </p>
+          {runUsedFallback && (
+            <p className="text-amber-400">
+              Fallback models produce weaker prose — if this reads flat, check the cascade.
+            </p>
+          )}
+        </div>
+      )}
+
       {showBrief && (
-        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3" data-testid="companion-brief-panel">
-          <div className="flex items-center justify-between gap-2">
+        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-4" data-testid="companion-brief-panel">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-sm font-medium text-foreground">Author Brief (Optional Seed)</p>
+              <p className="text-sm font-medium text-foreground">Companion Brief (Steering Seed)</p>
               <p className="text-xs text-muted-foreground">
-                Guides single-field, staged, and one-shot generation. Saved in this browser only.
+                Guides single-field, staged, and one-shot generation. Saved per card in this browser only.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setBrief(emptyCompanionBrief())}
-            >
-              Clear brief
-            </Button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground tabular-nums">Seed: {seedStrength(brief)}%</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setBrief({})}
+              >
+                Clear brief
+              </Button>
+            </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <label htmlFor="brief-concept" className="mb-1 block text-xs font-medium text-foreground">Concept / Premise</label>
-              <Input
-                id="brief-concept"
-                value={brief.concept}
-                onChange={(e) => setBrief((prev) => ({ ...prev, concept: e.target.value }))}
-                placeholder="Exiled royal archivist hiding in a neon port"
-                className="bg-secondary text-xs"
-              />
+
+          {/* 1. IDENTITY */}
+          <div className="space-y-2 rounded-md border border-border/60 bg-background/30 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">1. Identity</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <label htmlFor="brief-identity-name" className="mb-1 block text-xs font-medium text-foreground">Identity: Name</label>
+                <Input
+                  id="brief-identity-name"
+                  value={card.name}
+                  onChange={(e) => updateField("name", e.target.value)}
+                  placeholder="Luna Starweaver"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="brief-age-presentation" className="mb-1 block text-xs font-medium text-foreground">Age Presentation</label>
+                <Input
+                  id="brief-age-presentation"
+                  value={brief.agePresentation ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, agePresentation: e.target.value }))}
+                  placeholder="Mid-20s, looks older in dim light"
+                  className="bg-secondary text-xs"
+                />
+              </div>
             </div>
             <div>
-              <label htmlFor="brief-archetype" className="mb-1 block text-xs font-medium text-foreground">Archetype / Dynamic</label>
-              <Input
-                id="brief-archetype"
-                value={brief.archetype}
-                onChange={(e) => setBrief((prev) => ({ ...prev, archetype: e.target.value }))}
-                placeholder="Guarded mentor / reluctant ally"
-                className="bg-secondary text-xs"
+              <label htmlFor="brief-identity-tags" className="mb-1 block text-xs font-medium text-foreground">Tags</label>
+              <TagChipEditor
+                id="brief-identity-tags"
+                value={card.tags}
+                onChange={(next) => updateField("tags", next)}
+                placeholder="fantasy, slow-burn, rival"
+                inputAriaLabel="Brief add tag"
               />
             </div>
-            <div>
-              <label htmlFor="brief-tone" className="mb-1 block text-xs font-medium text-foreground">Tone</label>
-              <Input
-                id="brief-tone"
-                value={brief.tone}
-                onChange={(e) => setBrief((prev) => ({ ...prev, tone: e.target.value }))}
-                placeholder="Slow-burn noir, sharp banter"
-                className="bg-secondary text-xs"
-              />
+          </div>
+
+          {/* 2. WORLD */}
+          <div className="space-y-2 rounded-md border border-border/60 bg-background/30 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">2. World</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <label htmlFor="brief-setting" className="mb-1 block text-xs font-medium text-foreground">Setting &amp; Genre</label>
+                <Input
+                  id="brief-setting"
+                  value={brief.setting ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, setting: e.target.value }))}
+                  placeholder="Rain-slicked clocktower bookshop, cyberpunk noir"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="brief-role" className="mb-1 block text-xs font-medium text-foreground">Role / Occupation</label>
+                <Input
+                  id="brief-role"
+                  value={brief.role ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, role: e.target.value }))}
+                  placeholder="Exiled royal archivist"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 3. VOICE */}
+          <div className="space-y-2 rounded-md border border-border/60 bg-background/30 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">3. Voice</p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div>
+                <label htmlFor="brief-tone" className="mb-1 block text-xs font-medium text-foreground">Tone Register</label>
+                <Input
+                  id="brief-tone"
+                  value={brief.tone ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, tone: e.target.value }))}
+                  placeholder="Dry wit, guarded warmth"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="brief-reply-length" className="mb-1 block text-xs font-medium text-foreground">Target Reply Length</label>
+                <Input
+                  id="brief-reply-length"
+                  value={brief.replyLength ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, replyLength: e.target.value }))}
+                  placeholder="2–3 tight paragraphs"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="brief-banned-phrases" className="mb-1 block text-xs font-medium text-foreground">Banned Phrases</label>
+                <Input
+                  id="brief-banned-phrases"
+                  value={brief.bannedPhrases ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, bannedPhrases: e.target.value }))}
+                  placeholder="shivers down spine, smirked darkly"
+                  className="bg-secondary text-xs"
+                />
+              </div>
             </div>
             <div>
-              <label htmlFor="brief-setting" className="mb-1 block text-xs font-medium text-foreground">Setting</label>
-              <Input
-                id="brief-setting"
-                value={brief.setting}
-                onChange={(e) => setBrief((prev) => ({ ...prev, setting: e.target.value }))}
-                placeholder="Rain-slicked clocktower bookshop at midnight"
-                className="bg-secondary text-xs"
+              <label htmlFor="brief-voice-sample" className="mb-1 block text-xs font-medium text-foreground">
+                Voice Sample <span className="text-primary">(highest-leverage input — 1–3 lines in {"{{char}}"}'s cadence)</span>
+              </label>
+              <Textarea
+                id="brief-voice-sample"
+                value={brief.voiceSample ?? ""}
+                onChange={(e) => setBrief((prev) => ({ ...prev, voiceSample: e.target.value }))}
+                placeholder={`*taps the brass pocketwatch twice* "You're seven minutes late, and the ledger isn't getting drier."`}
+                className="min-h-[68px] bg-secondary text-xs"
               />
             </div>
-            <div>
-              <label htmlFor="brief-user-role" className="mb-1 block text-xs font-medium text-foreground">{"{{user}}"} Role</label>
-              <Input
-                id="brief-user-role"
-                value={brief.userRole}
-                onChange={(e) => setBrief((prev) => ({ ...prev, userRole: e.target.value }))}
-                placeholder="New courier carrying a sealed ledger"
-                className="bg-secondary text-xs"
-              />
+          </div>
+
+          {/* 4. RELATIONSHIP & FORMAT */}
+          <div className="space-y-2 rounded-md border border-border/60 bg-background/30 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">4. Relationship &amp; Format</p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div>
+                <label htmlFor="brief-relationship" className="mb-1 block text-xs font-medium text-foreground">Dynamic with {"{{user}}"}</label>
+                <Input
+                  id="brief-relationship"
+                  value={brief.relationship ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, relationship: e.target.value }))}
+                  placeholder="Reluctant allies sharing one secret"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="brief-pov" className="mb-1 block text-xs font-medium text-foreground">POV / Tense</label>
+                <Input
+                  id="brief-pov"
+                  value={brief.pov ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, pov: e.target.value }))}
+                  placeholder="3rd person present"
+                  className="bg-secondary text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="brief-language" className="mb-1 block text-xs font-medium text-foreground">Language</label>
+                <Input
+                  id="brief-language"
+                  value={brief.language ?? ""}
+                  onChange={(e) => setBrief((prev) => ({ ...prev, language: e.target.value }))}
+                  placeholder="English"
+                  className="bg-secondary text-xs"
+                />
+              </div>
             </div>
+          </div>
+
+          {/* 5. CONTENT LEVEL */}
+          <div className="space-y-2 rounded-md border border-border/60 bg-background/30 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">5. Content Level</p>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Content level">
+              {([1, 2, 3, 4, 5] as ContentLevel[]).map((lvl) => {
+                const selected = brief.contentLevel === lvl;
+                return (
+                  <button
+                    key={lvl}
+                    type="button"
+                    aria-pressed={selected}
+                    data-testid={`brief-content-level-${lvl}`}
+                    onClick={() =>
+                      setBrief((prev) => ({
+                        ...prev,
+                        contentLevel: prev.contentLevel === lvl ? undefined : lvl,
+                      }))
+                    }
+                    className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium transition ${
+                      selected
+                        ? `${contentLevelColors[lvl]} ring-2 ring-primary/60`
+                        : "border-border bg-secondary/50 text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    L{lvl} · {contentLevelLabels[lvl]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 6. MUST INCLUDE */}
+          <div className="space-y-2 rounded-md border border-border/60 bg-background/30 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">6. Must Include</p>
             <div>
-              <label htmlFor="brief-voice" className="mb-1 block text-xs font-medium text-foreground">Voice / Speech Tells</label>
+              <label htmlFor="brief-must-include" className="mb-1 block text-xs font-medium text-foreground">Constraint / Required Beat</label>
               <Input
-                id="brief-voice"
-                value={brief.voiceNotes}
-                onChange={(e) => setBrief((prev) => ({ ...prev, voiceNotes: e.target.value }))}
-                placeholder="Clipped dry wit, taps brass pocketwatch when lying"
+                id="brief-must-include"
+                value={brief.mustInclude ?? ""}
+                onChange={(e) => setBrief((prev) => ({ ...prev, mustInclude: e.target.value }))}
+                placeholder="Never apologizes first; always carries a cedarwood tally stick"
                 className="bg-secondary text-xs"
               />
             </div>
@@ -1337,13 +1433,22 @@ export const CharacterCardBuilder = () => {
                 )}
                 {generatableFields.has(field.key) && (
                   <>
-                    <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || generatingAll || generatingStaged || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
+                    <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || generatingAll || generatingOneShot || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
                       {generatingField === field.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
                       {generatingField === field.key ? "Generating..." : "AI Generate"}
                     </Button>
+                    {fieldProvider[field.key] && (
+                      <span
+                        className="inline-flex items-center rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                        data-testid={`field-provider-${field.key}`}
+                      >
+                        {providerLabel(fieldProvider[field.key])}
+                        {isByokProvider(fieldProvider[field.key]) ? " · BYOK" : ""}
+                      </span>
+                    )}
                     {fieldHasTrimContent(card[field.key]) && (
                       <RefinePopover
-                        disabled={generatingField === field.key || generatingAll || generatingStaged || aiUnavailable}
+                        disabled={generatingField === field.key || generatingAll || generatingOneShot || aiUnavailable}
                         loading={generatingField === field.key}
                         onRefine={(notes) => void handleGenerateField(field.key, notes)}
                         data-testid={`refine-field-${field.key}`}
@@ -1372,7 +1477,36 @@ export const CharacterCardBuilder = () => {
         <div>
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-medium text-foreground">Alternate Greetings</span>
-            <span className="text-xs text-muted-foreground">Multiple opening scenarios for the same character</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Multiple opening scenarios for the same character</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleGenerateField("alternate_greetings")}
+                disabled={generatingField === "alternate_greetings" || generatingAll || generatingOneShot || aiUnavailable}
+                className="h-7 px-2 text-xs text-muted-foreground hover:text-primary"
+              >
+                {generatingField === "alternate_greetings" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                {generatingField === "alternate_greetings" ? "Generating..." : "AI Generate"}
+              </Button>
+              {fieldProvider.alternate_greetings && (
+                <span
+                  className="inline-flex items-center rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                  data-testid="field-provider-alternate_greetings"
+                >
+                  {providerLabel(fieldProvider.alternate_greetings)}
+                  {isByokProvider(fieldProvider.alternate_greetings) ? " · BYOK" : ""}
+                </span>
+              )}
+              {fieldHasTrimContent(card.alternate_greetings) && (
+                <RefinePopover
+                  disabled={generatingField === "alternate_greetings" || generatingAll || generatingOneShot || aiUnavailable}
+                  loading={generatingField === "alternate_greetings"}
+                  onRefine={(notes) => void handleGenerateField("alternate_greetings", notes)}
+                  data-testid="refine-field-alternate_greetings"
+                />
+              )}
+            </div>
           </div>
           <ListEditor
             items={card.alternate_greetings}

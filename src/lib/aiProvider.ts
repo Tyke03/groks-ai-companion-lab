@@ -1,440 +1,290 @@
-/**
- * Multi-provider BYOK settings, CompanionBrief shape, and live model catalog
- * (24h localStorage cache) for Venice, OpenRouter, and OneProvider.
- *
- * Keys live ONLY in browser localStorage and are forwarded per-request to the
- * `venice-ai` edge function. Nothing is persisted or logged server-side.
- */
-
+// src/lib/aiProvider.ts   (replaces src/lib/aiKey.ts)
 import { supabase } from "@/integrations/supabase/client";
 
-export type AiProviderId = "venice" | "openrouter" | "oneprovider";
+export type ProviderId = "venice" | "openrouter" | "oneprovider";
+export const PROVIDER_IDS: ProviderId[] = ["venice", "openrouter", "oneprovider"];
 
-export const AI_PROVIDER_IDS: AiProviderId[] = ["venice", "openrouter", "oneprovider"];
+export interface ByokState {
+  keys: Partial<Record<ProviderId, string>>;
+  models: Partial<Record<ProviderId, string>>;
+  preferredProvider: ProviderId | null;
+  allowSharedFallback?: boolean;
+  temperature?: number;
+}
 
-export const AI_PROVIDER_LABELS: Record<AiProviderId, string> = {
+export const BYOK_STORAGE_KEY = "ai-companion-hub-byok-v1";
+export const MODEL_CACHE_KEY = "ai-companion-hub-model-catalog-v1";
+export const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export const LEGACY_OPENROUTER_KEY_STORAGE = "ai-companion-hub-openrouter-key";
+export const LEGACY_OPENROUTER_MODEL_STORAGE = "ai-companion-hub-openrouter-model";
+
+export const PROVIDER_LABEL: Record<ProviderId, string> = {
   venice: "Venice",
   openrouter: "OpenRouter",
   oneprovider: "OneProvider",
 };
 
-export const AI_PROVIDER_KEY_URLS: Record<AiProviderId, string> = {
+export const PROVIDER_KEYS_URL: Record<ProviderId, string> = {
   venice: "https://venice.ai/settings/api",
   openrouter: "https://openrouter.ai/keys",
   oneprovider: "https://oneprovider.dev",
 };
 
-export const AI_PROVIDER_SETTINGS_STORAGE = "ai-companion-hub-ai-provider-v1";
-export const AI_KEY_STORAGE = "ai-companion-hub-openrouter-key";
-export const AI_KEY_MODEL_STORAGE = "ai-companion-hub-openrouter-model";
-export const MODEL_CATALOG_STORAGE = "ai-companion-hub-model-catalog-v1";
-export const MODEL_CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
+export const SEED_MODELS: Record<ProviderId, string[]> = {
+  venice: ["zai-org-glm-4.7-flash"],
+  openrouter: [
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+    "sao10k/l3.3-euryale-70b",
+    "gryphe/mythomax-l2-13b",
+    "google/gemma-4-31b-it:free",
+  ],
+  oneprovider: ["grok-4.7", "glm-5.3-flash"],
+};
 
-export const DEFAULT_VENICE_MODEL = "zai-org-glm-4.7-flash";
-export const DEFAULT_OPENROUTER_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition";
-export const DEFAULT_ONEPROVIDER_MODEL = "grok-4.7";
-export const DEFAULT_TEMPERATURE = 0.7;
+export const DEFAULT_PROVIDER_MODEL: Record<ProviderId, string> = {
+  venice: "zai-org-glm-4.7-flash",
+  openrouter: "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+  oneprovider: "grok-4.7",
+};
 
-export interface ByokKeys {
-  venice: string;
-  openrouter: string;
-  oneprovider: string;
+const EMPTY: ByokState = { keys: {}, models: {}, preferredProvider: null };
+
+function canUseStorage(): boolean {
+  return typeof window !== "undefined" && !!window.localStorage;
 }
 
-export interface ProviderModelsConfig {
-  venice: string;
-  openrouter: string[];
-  oneprovider: string[];
-}
-
-export interface AiProviderSettings {
-  byok: ByokKeys;
-  models: ProviderModelsConfig;
-  preferredProvider: AiProviderId;
-  allowSharedFallback: boolean;
-  temperature: number;
-}
-
-export interface CompanionBrief {
-  concept: string;
-  archetype: string;
-  tone: string;
-  setting: string;
-  userRole: string;
-  voiceNotes: string;
-  tags: string;
-}
-
-export interface ModelCatalogEntry {
-  id: string;
-  name: string;
-  contextLength?: number;
-}
-
-export interface ModelCatalog {
-  venice: ModelCatalogEntry[];
-  openrouter: ModelCatalogEntry[];
-  oneprovider: ModelCatalogEntry[];
-  fetchedAt: number;
-  errors?: Partial<Record<AiProviderId, string>>;
-}
-
-const canUseStorage = () => typeof window !== "undefined" && !!window.localStorage;
-
-export function emptyCompanionBrief(): CompanionBrief {
-  return {
-    concept: "",
-    archetype: "",
-    tone: "",
-    setting: "",
-    userRole: "",
-    voiceNotes: "",
-    tags: "",
-  };
-}
-
-export function cleanCompanionBrief(
-  brief: Partial<CompanionBrief> | null | undefined,
-): Partial<CompanionBrief> | undefined {
-  if (!brief || typeof brief !== "object") return undefined;
-  const out: Partial<CompanionBrief> = {};
-  const keys: (keyof CompanionBrief)[] = [
-    "concept",
-    "archetype",
-    "tone",
-    "setting",
-    "userRole",
-    "voiceNotes",
-    "tags",
-  ];
-  for (const key of keys) {
-    const val = typeof brief[key] === "string" ? brief[key]!.trim() : "";
-    if (val) out[key] = val;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-export function defaultAiProviderSettings(): AiProviderSettings {
-  return {
-    byok: {
-      venice: "",
-      openrouter: "",
-      oneprovider: "",
-    },
-    models: {
-      venice: DEFAULT_VENICE_MODEL,
-      openrouter: [DEFAULT_OPENROUTER_MODEL],
-      oneprovider: [DEFAULT_ONEPROVIDER_MODEL],
-    },
-    preferredProvider: "venice",
-    allowSharedFallback: false,
-    temperature: DEFAULT_TEMPERATURE,
-  };
-}
-
-function normalizeProviderId(value: unknown): AiProviderId {
-  return value === "venice" || value === "openrouter" || value === "oneprovider" ? value : "venice";
-}
-
-function normalizeModelList(value: unknown, fallback: string): string[] {
-  const out: string[] = [];
-  if (typeof value === "string" && value.trim()) {
-    out.push(value.trim());
-  } else if (Array.isArray(value)) {
-    for (const item of value) {
-      if (typeof item === "string" && item.trim() && !out.includes(item.trim())) {
-        out.push(item.trim());
-      }
-    }
-  }
-  return out.length > 0 ? out : [fallback];
-}
-
-function clampTemperature(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_TEMPERATURE;
-  return Math.max(0, Math.min(1.2, Math.round(value * 100) / 100));
-}
-
-export function loadAiProviderSettings(): AiProviderSettings {
-  const defaults = defaultAiProviderSettings();
-  if (!canUseStorage()) return defaults;
-
-  let storedRaw: Record<string, unknown> | null = null;
-  let legacyKey = "";
-  let legacyModel = "";
-
+export function loadByok(): ByokState {
+  if (!canUseStorage()) return { keys: {}, models: {}, preferredProvider: null };
   try {
-    const raw = window.localStorage.getItem(AI_PROVIDER_SETTINGS_STORAGE);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        storedRaw = parsed as Record<string, unknown>;
+    const rawStr = window.localStorage.getItem(BYOK_STORAGE_KEY);
+    const raw = JSON.parse(rawStr || "null");
+    const keys: ByokState["keys"] = {};
+    const models: ByokState["models"] = {};
+
+    if (raw && typeof raw === "object") {
+      for (const id of PROVIDER_IDS) {
+        const k = raw.keys?.[id];
+        const m = raw.models?.[id];
+        if (typeof k === "string" && k.trim()) keys[id] = k.trim();
+        if (typeof m === "string" && m.trim()) models[id] = m.trim();
       }
     }
-    legacyKey = (window.localStorage.getItem(AI_KEY_STORAGE) || "").trim();
-    legacyModel = (window.localStorage.getItem(AI_KEY_MODEL_STORAGE) || "").trim();
+
+    if (!rawStr) {
+      const legacyKey = (window.localStorage.getItem(LEGACY_OPENROUTER_KEY_STORAGE) || "").trim();
+      const legacyModel = (window.localStorage.getItem(LEGACY_OPENROUTER_MODEL_STORAGE) || "").trim();
+      if (legacyKey) keys.openrouter = legacyKey;
+      if (legacyModel) models.openrouter = legacyModel;
+    }
+
+    const preferred = raw?.preferredProvider;
+    const allowSharedFallback = raw?.allowSharedFallback === true ? true : undefined;
+    const temperature =
+      typeof raw?.temperature === "number" && Number.isFinite(raw.temperature)
+        ? Math.min(1.2, Math.max(0, raw.temperature))
+        : undefined;
+
+    return {
+      keys,
+      models,
+      preferredProvider:
+        preferred === "venice" || preferred === "openrouter" || preferred === "oneprovider"
+          ? preferred
+          : null,
+      ...(allowSharedFallback !== undefined ? { allowSharedFallback } : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
+    };
   } catch {
-    // ignore storage errors
+    return { ...EMPTY, keys: {}, models: {} };
   }
-
-  const rawByok = storedRaw?.byok && typeof storedRaw.byok === "object"
-    ? (storedRaw.byok as Record<string, unknown>)
-    : {};
-  const rawModels = storedRaw?.models && typeof storedRaw.models === "object"
-    ? (storedRaw.models as Record<string, unknown>)
-    : {};
-
-  const veniceKey = typeof rawByok.venice === "string" ? rawByok.venice.trim() : "";
-  const openrouterKey = (typeof rawByok.openrouter === "string" ? rawByok.openrouter.trim() : "") || legacyKey;
-  const oneproviderKey = typeof rawByok.oneprovider === "string" ? rawByok.oneprovider.trim() : "";
-
-  const openrouterModels = normalizeModelList(rawModels.openrouter, legacyModel || DEFAULT_OPENROUTER_MODEL);
-  if (legacyModel && !storedRaw && !openrouterModels.includes(legacyModel)) {
-    openrouterModels.unshift(legacyModel);
-  }
-
-  const byok: ByokKeys = {
-    venice: veniceKey,
-    openrouter: openrouterKey,
-    oneprovider: oneproviderKey,
-  };
-
-  let preferredProvider = storedRaw?.preferredProvider
-    ? normalizeProviderId(storedRaw.preferredProvider)
-    : "venice";
-
-  if (!storedRaw && openrouterKey) {
-    preferredProvider = "openrouter";
-  }
-
-  return {
-    byok,
-    models: {
-      venice: (typeof rawModels.venice === "string" && rawModels.venice.trim()) || DEFAULT_VENICE_MODEL,
-      openrouter: openrouterModels,
-      oneprovider: normalizeModelList(rawModels.oneprovider, DEFAULT_ONEPROVIDER_MODEL),
-    },
-    preferredProvider,
-    allowSharedFallback: typeof storedRaw?.allowSharedFallback === "boolean" ? storedRaw.allowSharedFallback : false,
-    temperature: clampTemperature(storedRaw?.temperature),
-  };
 }
 
-export function saveAiProviderSettings(
-  update: Partial<Omit<AiProviderSettings, "byok" | "models">> & {
-    byok?: Partial<ByokKeys>;
-    models?: Partial<ProviderModelsConfig>;
-  },
-): AiProviderSettings {
-  const current = loadAiProviderSettings();
-  const next: AiProviderSettings = {
-    byok: {
-      venice: (update.byok?.venice !== undefined ? update.byok.venice : current.byok.venice).trim(),
-      openrouter: (update.byok?.openrouter !== undefined ? update.byok.openrouter : current.byok.openrouter).trim(),
-      oneprovider: (update.byok?.oneprovider !== undefined ? update.byok.oneprovider : current.byok.oneprovider).trim(),
-    },
-    models: {
-      venice: (update.models?.venice !== undefined ? update.models.venice : current.models.venice).trim() || DEFAULT_VENICE_MODEL,
-      openrouter: normalizeModelList(
-        update.models?.openrouter !== undefined ? update.models.openrouter : current.models.openrouter,
-        DEFAULT_OPENROUTER_MODEL,
-      ),
-      oneprovider: normalizeModelList(
-        update.models?.oneprovider !== undefined ? update.models.oneprovider : current.models.oneprovider,
-        DEFAULT_ONEPROVIDER_MODEL,
-      ),
-    },
-    preferredProvider: update.preferredProvider
-      ? normalizeProviderId(update.preferredProvider)
-      : current.preferredProvider,
-    allowSharedFallback: typeof update.allowSharedFallback === "boolean"
-      ? update.allowSharedFallback
-      : current.allowSharedFallback,
-    temperature: update.temperature !== undefined
-      ? clampTemperature(update.temperature)
-      : current.temperature,
+export function saveByok(next: ByokState): ByokState {
+  const normalized: ByokState = {
+    keys: {},
+    models: {},
+    preferredProvider:
+      next.preferredProvider === "venice" ||
+      next.preferredProvider === "openrouter" ||
+      next.preferredProvider === "oneprovider"
+        ? next.preferredProvider
+        : null,
+    ...(next.allowSharedFallback === true ? { allowSharedFallback: true } : {}),
+    ...(typeof next.temperature === "number" && Number.isFinite(next.temperature)
+      ? { temperature: Math.min(1.2, Math.max(0, next.temperature)) }
+      : {}),
   };
+  for (const id of PROVIDER_IDS) {
+    const k = next.keys?.[id];
+    const m = next.models?.[id];
+    if (typeof k === "string" && k.trim()) normalized.keys[id] = k.trim();
+    if (typeof m === "string" && m.trim()) normalized.models[id] = m.trim();
+  }
+  if (!canUseStorage()) return normalized;
+  try {
+    window.localStorage.setItem(BYOK_STORAGE_KEY, JSON.stringify(normalized));
+    if (!normalized.keys.openrouter) {
+      window.localStorage.removeItem(LEGACY_OPENROUTER_KEY_STORAGE);
+    }
+  } catch {
+    /* quota */
+  }
+  return normalized;
+}
 
-  if (canUseStorage()) {
+export function clearProvider(id: ProviderId): ByokState {
+  const state = loadByok();
+  delete state.keys[id];
+  delete state.models[id];
+  if (state.preferredProvider === id) state.preferredProvider = null;
+  if (id === "openrouter" && canUseStorage()) {
     try {
-      window.localStorage.setItem(AI_PROVIDER_SETTINGS_STORAGE, JSON.stringify(next));
-      if (next.byok.openrouter) {
-        window.localStorage.setItem(AI_KEY_STORAGE, next.byok.openrouter);
-      } else {
-        window.localStorage.removeItem(AI_KEY_STORAGE);
-      }
-      window.localStorage.setItem(
-        AI_KEY_MODEL_STORAGE,
-        next.models.openrouter[0] || DEFAULT_OPENROUTER_MODEL,
-      );
+      window.localStorage.removeItem(LEGACY_OPENROUTER_KEY_STORAGE);
+      window.localStorage.removeItem(LEGACY_OPENROUTER_MODEL_STORAGE);
     } catch {
-      // ignore storage failures
+      /* ignore */
     }
   }
-  return next;
+  return saveByok(state);
 }
 
-export function clearAiProviderKey(provider: AiProviderId): AiProviderSettings {
-  return saveAiProviderSettings({ byok: { [provider]: "" } });
+export function clearAllByok(): void {
+  if (!canUseStorage()) return;
+  try {
+    window.localStorage.removeItem(BYOK_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_OPENROUTER_KEY_STORAGE);
+    window.localStorage.removeItem(LEGACY_OPENROUTER_MODEL_STORAGE);
+  } catch {
+    /* ignore */
+  }
 }
 
-export function hasAnyByokKey(settings?: AiProviderSettings): boolean {
-  const s = settings ?? loadAiProviderSettings();
-  return Boolean(
-    s.byok.venice.trim() ||
-    s.byok.openrouter.trim() ||
-    s.byok.oneprovider.trim(),
-  );
+/** True when the visitor has any key set (AI should be enabled regardless of server keys). */
+export function hasByok(): boolean {
+  const s = loadByok();
+  return Object.values(s.keys).some((k) => !!k && k.trim().length > 0);
 }
 
-function hasCustomProviderPrefs(s: AiProviderSettings): boolean {
-  return (
-    s.preferredProvider !== "venice" ||
-    s.models.venice !== DEFAULT_VENICE_MODEL ||
-    s.models.openrouter[0] !== DEFAULT_OPENROUTER_MODEL ||
-    s.models.oneprovider[0] !== DEFAULT_ONEPROVIDER_MODEL ||
-    s.temperature !== DEFAULT_TEMPERATURE
-  );
+export function maskKey(key: string): string {
+  const k = (key || "").trim();
+  if (k.length <= 10) return k ? "••••" : "";
+  return `${k.slice(0, 8)}…${k.slice(-3)}`;
 }
 
-export function withAiProviderSettings(
-  body: Record<string, unknown>,
-  settings?: AiProviderSettings,
-): Record<string, unknown> {
-  const s = settings ?? loadAiProviderSettings();
-  const hasByok = hasAnyByokKey(s);
-
-  if (!hasByok && !hasCustomProviderPrefs(s)) {
-    return body;
+/**
+ * Merge BYOK state into an edge request body.
+ * Safe to call with no keys — returns the body unchanged so the SIMPLE path works.
+ */
+export function withAiProvider(body: Record<string, unknown>): Record<string, unknown> {
+  const s = loadByok();
+  const keys = Object.fromEntries(Object.entries(s.keys).filter(([, v]) => !!v));
+  const models: Record<string, string[]> = {};
+  for (const [id, model] of Object.entries(s.models)) {
+    if (model) models[id] = [model as string];
   }
-
-  const byokPayload: Partial<Record<AiProviderId, string>> = {};
-  if (s.byok.venice.trim()) byokPayload.venice = s.byok.venice.trim();
-  if (s.byok.openrouter.trim()) byokPayload.openrouter = s.byok.openrouter.trim();
-  if (s.byok.oneprovider.trim()) byokPayload.oneprovider = s.byok.oneprovider.trim();
-
-  const out: Record<string, unknown> = {
-    ...body,
-    preferredProvider: s.preferredProvider,
-    models: {
-      venice: s.models.venice,
-      openrouter: s.models.openrouter,
-      oneprovider: s.models.oneprovider,
-    },
-  };
-
-  if (hasByok) {
-    out.byok = byokPayload;
-    out.allowSharedFallback = s.allowSharedFallback;
+  if (Object.keys(keys).length === 0) {
+    if (!Object.keys(models).length && !s.preferredProvider && typeof s.temperature !== "number") {
+      return body;
+    }
+    const out: Record<string, unknown> = { ...body };
+    if (Object.keys(models).length) out.models = models;
+    if (s.preferredProvider) out.preferredProvider = s.preferredProvider;
+    if (typeof s.temperature === "number") out.temperature = s.temperature;
+    return out;
   }
-
-  if (s.temperature !== DEFAULT_TEMPERATURE) {
-    out.temperature = s.temperature;
-  }
-
-  if (byokPayload.openrouter) {
-    out.openrouterKey = byokPayload.openrouter;
-    if (s.models.openrouter[0]) out.openrouterModel = s.models.openrouter[0];
-  }
-
+  const out: Record<string, unknown> = { ...body, byok: keys };
+  if (Object.keys(models).length) out.models = models;
+  if (s.preferredProvider) out.preferredProvider = s.preferredProvider;
+  if (s.allowSharedFallback === true) out.allowSharedFallback = true;
+  if (typeof s.temperature === "number") out.temperature = s.temperature;
   return out;
 }
 
-/* ============================================================
-   LIVE MODEL CATALOG (24h localStorage cache, R4 / Q4)
-   ============================================================ */
+/* ---- model catalog: fetched live via the edge `list-models` action (R4) ---- */
+export interface ModelOption {
+  id: string;
+  name: string;
+}
 
-export function loadCachedModelCatalog(opts?: { ignoreTtl?: boolean }): ModelCatalog | null {
+export interface ModelCatalog {
+  fetchedAt: number;
+  models: Partial<Record<ProviderId, ModelOption[]>>;
+  seeds: Partial<Record<ProviderId, string[]>>;
+  defaults: Partial<Record<ProviderId, string>>;
+  errors: Partial<Record<ProviderId, string>>;
+}
+
+export function loadCachedCatalog(): ModelCatalog | null {
   if (!canUseStorage()) return null;
   try {
-    const raw = window.localStorage.getItem(MODEL_CATALOG_STORAGE);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ModelCatalog>;
-    if (!parsed || typeof parsed !== "object" || typeof parsed.fetchedAt !== "number") {
-      return null;
-    }
-    if (!opts?.ignoreTtl && Date.now() - parsed.fetchedAt > MODEL_CATALOG_TTL_MS) {
-      return null;
-    }
-    return {
-      venice: Array.isArray(parsed.venice) ? parsed.venice : [],
-      openrouter: Array.isArray(parsed.openrouter) ? parsed.openrouter : [],
-      oneprovider: Array.isArray(parsed.oneprovider) ? parsed.oneprovider : [],
-      fetchedAt: parsed.fetchedAt,
-      ...(parsed.errors ? { errors: parsed.errors } : {}),
-    };
+    const raw = JSON.parse(window.localStorage.getItem(MODEL_CACHE_KEY) || "null");
+    if (!raw || typeof raw !== "object") return null;
+    if (Date.now() - Number(raw.fetchedAt || 0) > MODEL_CACHE_TTL_MS) return null;
+    return raw as ModelCatalog;
   } catch {
     return null;
   }
 }
 
-export function clearModelCatalogCache(): void {
-  if (!canUseStorage()) return;
-  try {
-    window.localStorage.removeItem(MODEL_CATALOG_STORAGE);
-  } catch {
-    // ignore
-  }
+async function defaultInvoke(body: Record<string, unknown>): Promise<unknown> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.functions.invoke("venice-ai", { body });
+  if (error) throw new Error(error instanceof Error ? error.message : String(error));
+  return data;
 }
 
-export async function fetchModelCatalog(opts?: { forceRefresh?: boolean }): Promise<ModelCatalog> {
-  if (!opts?.forceRefresh) {
-    const cached = loadCachedModelCatalog();
+export async function fetchModelCatalog(
+  invoke?: (body: Record<string, unknown>) => Promise<unknown>,
+  force = false,
+): Promise<ModelCatalog> {
+  if (!force) {
+    const cached = loadCachedCatalog();
     if (cached) return cached;
   }
-
-  if (!supabase) {
-    const stale = loadCachedModelCatalog({ ignoreTtl: true });
-    if (stale) return stale;
-    throw new Error("Supabase is not configured.");
-  }
-
-  const { data, error } = await supabase.functions.invoke("venice-ai", {
-    body: withAiProviderSettings({ action: "list-models" }),
-  });
-
-  if (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
-
-  const rawModels = data && typeof data === "object" && "models" in data
-    ? (data as { models?: Record<string, unknown>; errors?: Partial<Record<AiProviderId, string>> }).models
-    : undefined;
-
-  const normalizeList = (arr: unknown): ModelCatalogEntry[] => {
-    if (!Array.isArray(arr)) return [];
-    const out: ModelCatalogEntry[] = [];
-    for (const item of arr) {
-      if (!item || typeof item !== "object") continue;
-      const rec = item as Record<string, unknown>;
-      const id = typeof rec.id === "string" ? rec.id.trim() : "";
-      if (!id) continue;
-      const name = typeof rec.name === "string" && rec.name.trim() ? rec.name.trim() : id;
-      const contextLength = typeof rec.contextLength === "number" && Number.isFinite(rec.contextLength)
-        ? rec.contextLength
-        : undefined;
-      out.push(contextLength ? { id, name, contextLength } : { id, name });
-    }
-    return out;
-  };
-
+  const caller = invoke ?? defaultInvoke;
+  const s = loadByok();
+  const raw = await caller({ action: "list-models", byok: s.keys });
+  const rec = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const rawModels = (rec.models && typeof rec.models === "object" ? rec.models : {}) as Record<string, unknown>;
   const catalog: ModelCatalog = {
-    venice: normalizeList(rawModels?.venice),
-    openrouter: normalizeList(rawModels?.openrouter),
-    oneprovider: normalizeList(rawModels?.oneprovider),
     fetchedAt: Date.now(),
-    ...(data && typeof data === "object" && "errors" in data && (data as { errors?: unknown }).errors
-      ? { errors: (data as { errors: Partial<Record<AiProviderId, string>> }).errors }
-      : {}),
+    models: { ...(rawModels as Partial<Record<ProviderId, ModelOption[]>>) },
+    seeds: (rec.seeds && typeof rec.seeds === "object" ? rec.seeds : SEED_MODELS) as Partial<Record<ProviderId, string[]>>,
+    defaults: (rec.defaults && typeof rec.defaults === "object" ? rec.defaults : DEFAULT_PROVIDER_MODEL) as Partial<Record<ProviderId, string>>,
+    errors: {},
   };
-
+  for (const id of PROVIDER_IDS) {
+    const entry = catalog.models?.[id];
+    if (entry && !Array.isArray(entry)) {
+      catalog.errors[id] = (entry as { error?: string }).error ?? "unavailable";
+      catalog.models[id] = undefined;
+    }
+  }
   if (canUseStorage()) {
     try {
-      window.localStorage.setItem(MODEL_CATALOG_STORAGE, JSON.stringify(catalog));
+      window.localStorage.setItem(MODEL_CACHE_KEY, JSON.stringify(catalog));
     } catch {
-      // ignore storage quota errors
+      /* quota */
     }
   }
-
   return catalog;
 }
+
+export const HOW_TO_GET_KEY_STEPS: Record<ProviderId, string[]> = {
+  venice: [
+    "Create a Venice account and generate an API key.",
+    "Paste it above and Save. It stays in this browser only.",
+    "Optional: pick a model below, or leave it on the recommended default.",
+  ],
+  openrouter: [
+    "Create a free account at openrouter.ai.",
+    "Open Keys and click Create Key.",
+    "Copy the key — it starts with sk-or- (or sk-or-v1-).",
+    "Paste it above and Save. It stays in this browser only.",
+  ],
+  oneprovider: [
+    "Create a OneProvider account and generate an API key.",
+    "Paste it above and Save. It stays in this browser only.",
+  ],
+};

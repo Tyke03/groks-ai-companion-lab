@@ -1,19 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import {
-  AI_KEY_STORAGE,
-  AI_PROVIDER_SETTINGS_STORAGE,
-  MODEL_CATALOG_STORAGE,
-  MODEL_CATALOG_TTL_MS,
-  clearAiProviderKey,
-  cleanCompanionBrief,
-  emptyCompanionBrief,
+  BYOK_STORAGE_KEY,
+  LEGACY_OPENROUTER_KEY_STORAGE,
+  LEGACY_OPENROUTER_MODEL_STORAGE,
+  MODEL_CACHE_KEY,
+  MODEL_CACHE_TTL_MS,
+  SEED_MODELS,
+  clearAllByok,
+  clearProvider,
   fetchModelCatalog,
-  hasAnyByokKey,
-  loadAiProviderSettings,
-  loadCachedModelCatalog,
-  saveAiProviderSettings,
-  withAiProviderSettings,
+  hasByok,
+  loadByok,
+  loadCachedCatalog,
+  saveByok,
+  withAiProvider,
 } from "@/lib/aiProvider";
 import { withAiKey, loadAiKey, saveAiKey } from "@/lib/aiKey";
 import { AiKeySettings } from "@/components/tools/AiKeySettings";
@@ -41,71 +42,69 @@ afterEach(() => {
 describe("aiProvider multi-provider BYOK settings", () => {
   it("returns clean passthrough when no BYOK keys or custom preferences exist", () => {
     const body = { action: "generate-field", fieldName: "description" };
+    expect(withAiProvider(body)).toEqual(body);
     expect(withAiKey(body)).toEqual(body);
-    expect(hasAnyByokKey()).toBe(false);
+    expect(hasByok()).toBe(false);
   });
 
-  it("saves and clears keys across Venice, OpenRouter, and OneProvider", () => {
-    saveAiProviderSettings({
-      byok: {
+  it("saves, clears per-provider, and clears all across Venice, OpenRouter, and OneProvider", () => {
+    saveByok({
+      keys: {
         venice: "ven-1234567890",
         openrouter: "sk-or-v1-abc123456",
         oneprovider: "op-key-999999",
       },
       preferredProvider: "oneprovider",
-      temperature: 0.9,
       models: {
         venice: "custom-venice-model",
-        openrouter: ["sao10k/l3.3-euryale-70b"],
-        oneprovider: ["grok-4.7"],
+        openrouter: "sao10k/l3.3-euryale-70b",
+        oneprovider: "grok-4.7",
       },
     });
 
-    expect(hasAnyByokKey()).toBe(true);
-    const loaded = loadAiProviderSettings();
-    expect(loaded.byok.venice).toBe("ven-1234567890");
-    expect(loaded.byok.openrouter).toBe("sk-or-v1-abc123456");
-    expect(loaded.byok.oneprovider).toBe("op-key-999999");
+    expect(hasByok()).toBe(true);
+    const loaded = loadByok();
+    expect(loaded.keys.venice).toBe("ven-1234567890");
+    expect(loaded.keys.openrouter).toBe("sk-or-v1-abc123456");
+    expect(loaded.keys.oneprovider).toBe("op-key-999999");
     expect(loaded.preferredProvider).toBe("oneprovider");
-    expect(loaded.allowSharedFallback).toBe(false);
-    expect(loaded.temperature).toBe(0.9);
-    expect(localStorage.getItem(AI_KEY_STORAGE)).toBe("sk-or-v1-abc123456");
 
-    const merged = withAiProviderSettings({ action: "generate-field" });
+    const merged = withAiProvider({ action: "generate-field" });
     expect(merged.preferredProvider).toBe("oneprovider");
-    expect(merged.allowSharedFallback).toBe(false);
-    expect(merged.temperature).toBe(0.9);
     expect(merged.byok).toEqual({
       venice: "ven-1234567890",
       openrouter: "sk-or-v1-abc123456",
       oneprovider: "op-key-999999",
     });
+    expect(merged.models).toEqual({
+      venice: ["custom-venice-model"],
+      openrouter: ["sao10k/l3.3-euryale-70b"],
+      oneprovider: ["grok-4.7"],
+    });
 
-    clearAiProviderKey("venice");
-    expect(loadAiProviderSettings().byok.venice).toBe("");
-    expect(loadAiProviderSettings().byok.oneprovider).toBe("op-key-999999");
+    clearProvider("venice");
+    expect(loadByok().keys.venice).toBeUndefined();
+    expect(loadByok().keys.oneprovider).toBe("op-key-999999");
+
+    clearAllByok();
+    expect(hasByok()).toBe(false);
+    expect(localStorage.getItem(BYOK_STORAGE_KEY)).toBeNull();
   });
 
   it("migrates legacy openrouter key storage seamlessly", () => {
     saveAiKey({ key: "sk-or-v1-legacy999", model: "gryphe/mythomax-l2-13b" });
-    localStorage.removeItem(AI_PROVIDER_SETTINGS_STORAGE);
-    const loaded = loadAiProviderSettings();
-    expect(loaded.byok.openrouter).toBe("sk-or-v1-legacy999");
-    expect(loaded.models.openrouter[0]).toBe("gryphe/mythomax-l2-13b");
+    localStorage.removeItem(BYOK_STORAGE_KEY);
+    localStorage.setItem(LEGACY_OPENROUTER_KEY_STORAGE, "sk-or-v1-legacy999");
+    localStorage.setItem(LEGACY_OPENROUTER_MODEL_STORAGE, "gryphe/mythomax-l2-13b");
+    const loaded = loadByok();
+    expect(loaded.keys.openrouter).toBe("sk-or-v1-legacy999");
+    expect(loaded.models.openrouter).toBe("gryphe/mythomax-l2-13b");
     expect(loadAiKey().key).toBe("sk-or-v1-legacy999");
-  });
-
-  it("cleans CompanionBrief only returning non-empty fields", () => {
-    const empty = emptyCompanionBrief();
-    expect(cleanCompanionBrief(empty)).toBeUndefined();
-    expect(
-      cleanCompanionBrief({ ...empty, concept: "  Cyberpunk courier  ", tone: "  Noir  " }),
-    ).toEqual({ concept: "Cyberpunk courier", tone: "Noir" });
   });
 });
 
 describe("aiProvider live model catalog caching (24h)", () => {
-  it("fetches from edge list-models and caches for 24h unless forceRefresh is set", async () => {
+  it("fetches from edge list-models and caches for 24h unless force is true", async () => {
     invokeMock.mockResolvedValue({
       data: {
         models: {
@@ -113,38 +112,41 @@ describe("aiProvider live model catalog caching (24h)", () => {
           openrouter: [{ id: "cognitivecomputations/dolphin-mistral-24b-venice-edition", name: "Venice Uncensored" }],
           oneprovider: [{ id: "grok-4.7", name: "Grok 4.7" }],
         },
-        provider: "edge",
+        seeds: SEED_MODELS,
       },
       error: null,
     });
 
     const first = await fetchModelCatalog();
-    expect(first.venice[0].id).toBe("zai-org-glm-4.7-flash");
+    expect(first.models.venice?.[0].id).toBe("zai-org-glm-4.7-flash");
     expect(invokeMock).toHaveBeenCalledTimes(1);
 
     const second = await fetchModelCatalog();
-    expect(second.openrouter[0].id).toContain("dolphin-mistral-24b");
+    expect(second.models.openrouter?.[0].id).toContain("dolphin-mistral-24b");
     expect(invokeMock).toHaveBeenCalledTimes(1);
 
-    await fetchModelCatalog({ forceRefresh: true });
+    await fetchModelCatalog(undefined, true);
     expect(invokeMock).toHaveBeenCalledTimes(2);
 
-    // Expire cache manually and confirm stale cache returns null
-    const cached = JSON.parse(localStorage.getItem(MODEL_CATALOG_STORAGE) || "{}");
-    cached.fetchedAt = Date.now() - MODEL_CATALOG_TTL_MS - 1000;
-    localStorage.setItem(MODEL_CATALOG_STORAGE, JSON.stringify(cached));
-    expect(loadCachedModelCatalog()).toBeNull();
+    const cached = JSON.parse(localStorage.getItem(MODEL_CACHE_KEY) || "{}");
+    cached.fetchedAt = Date.now() - MODEL_CACHE_TTL_MS - 1000;
+    localStorage.setItem(MODEL_CACHE_KEY, JSON.stringify(cached));
+    expect(loadCachedCatalog()).toBeNull();
   });
 });
 
-describe("AiKeySettings collapsed Advanced disclosure", () => {
-  it("starts with Advanced closed by default and expands to 3-provider controls", async () => {
-    invokeMock.mockResolvedValue({
-      data: { models: { venice: [], openrouter: [], oneprovider: [] }, provider: "edge" },
-      error: null,
-    });
+describe("AiKeySettings collapsed Advanced disclosure & seeded select", () => {
+  it("shows Simple mode default, keeps Advanced closed, and swaps seeded select to live models", async () => {
+    let resolveFetch!: (val: unknown) => void;
+    invokeMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
 
     render(<AiKeySettings hasServerKey />);
+    expect(screen.getByTestId("ai-mode-summary")).toHaveTextContent("Simple mode: using the shared backend");
+
     const toggle = screen.getByTestId("ai-advanced-toggle");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("ai-advanced-panel")).not.toBeInTheDocument();
@@ -152,10 +154,31 @@ describe("AiKeySettings collapsed Advanced disclosure", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByTestId("ai-advanced-panel")).toBeInTheDocument();
+
+    // Seed models appear immediately while live fetch is pending (never empty select)
+    const veniceSelect = screen.getByTestId("model-select-venice") as HTMLSelectElement;
+    expect(veniceSelect.options.length).toBeGreaterThan(0);
+    expect(veniceSelect.options[0].value).toBe(SEED_MODELS.venice[0]);
+
     expect(screen.getByLabelText("Venice API key")).toBeInTheDocument();
     expect(screen.getByLabelText("OpenRouter API key")).toBeInTheDocument();
     expect(screen.getByLabelText("OneProvider API key")).toBeInTheDocument();
     expect(screen.getByLabelText("Preferred provider")).toBeInTheDocument();
-    expect(screen.getByLabelText("Temperature")).toBeInTheDocument();
+
+    resolveFetch({
+      data: {
+        models: {
+          venice: [{ id: "venice-live-model", name: "Venice Live" }],
+          openrouter: [{ id: "or-live-model", name: "OR Live" }],
+          oneprovider: [{ id: "op-live-model", name: "OP Live" }],
+        },
+        seeds: SEED_MODELS,
+      },
+      error: null,
+    });
+
+    await waitFor(() => {
+      expect(Array.from(veniceSelect.options).some((o) => o.value === "venice-live-model")).toBe(true);
+    });
   });
 });

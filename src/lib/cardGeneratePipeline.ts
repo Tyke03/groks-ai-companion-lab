@@ -3,8 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { withAiProvider } from "@/lib/aiProvider";
 import {
   applyGenerateFieldResult,
+  ensureOriginalMacro,
   normalizeAiMultiline,
+  normalizeCardTags,
   parseAiStringList,
+  replaceLiteralCharName,
   rewriteSpeakerLabels,
   sanitizeCardData,
   sanitizeCardMacros,
@@ -204,10 +207,24 @@ export function applyFieldResult(card: CardData, fieldName: keyof CardData, raw:
       rewriteSpeakerLabels(normalizeAiMultiline(String(value ?? "")), charName),
       String(fieldName),
     );
+  } else if (fieldName === "tags") {
+    (next.tags as string) = normalizeCardTags(
+      typeof value === "string" ? value : value == null ? "" : String(value),
+    );
+  } else if (fieldName === "system_prompt" || fieldName === "post_history_instructions") {
+    const cleaned = sanitizeCardMacros(
+      typeof value === "string" ? value : value == null ? "" : String(value),
+      String(fieldName),
+      charName,
+    );
+    (next[fieldName] as string) = cleaned.trim()
+      ? ensureOriginalMacro(replaceLiteralCharName(cleaned, charName))
+      : "";
   } else {
     (next[fieldName] as string) = sanitizeCardMacros(
       typeof value === "string" ? value : value == null ? "" : String(value),
       String(fieldName),
+      charName,
     );
   }
   return next;

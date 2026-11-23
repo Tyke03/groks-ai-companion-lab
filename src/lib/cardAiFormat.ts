@@ -12,8 +12,8 @@ export const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTa
 - Each block starts with <START> alone on its own line.
 - Immediately after <START>, use {{user}}: and {{char}}: speaker labels (never User:, never the character's real name as a label, never Name:).
 - Macros MUST be lowercase {{user}} / {{char}} only. Ban {{User}}, {{Char}}, {{User's}}; use {{user}}'s. Ban "The User". Ban User:/Name: labels.
-- Do NOT wrap entire lines in quotes.
-- Put actions and inner thoughts in single asterisks, SillyTavern-style: *giggles* *she leans in close*
+- Use UNIFORM novel-style formatting matching first_mes and greetings: "double quotes" for spoken dialogue and *single asterisks* for actions and inner thoughts. Never wrap an entire turn (including actions) inside one outer pair of quotes.
+- Never narrate {{user}}'s actions or dialogue inside {{char}}: lines.
 - Do NOT mash actions with semicolons or put the whole exchange on one line.
 - Steer tone/length from the character's name, personality, scenario, first message, and description.
 - Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker (then shorter replies are OK).
@@ -25,16 +25,16 @@ THREE-BLOCK PROGRESSION (required range — not three casual hellos):
 
 Good shape:
 <START>
-{{user}}: Hey — ready to start?
-{{char}}: *smiles* Absolutely. *leans in* Follow my lead and we'll make magic.
+{{user}}: "Hey — ready to start?"
+{{char}}: *smiles* "Absolutely." *leans in* "Follow my lead and we'll make magic."
 
 <START>
-{{user}}: That was… intense. Are we okay?
-{{char}}: *softens* With you? Always. *quieter* Don't make me say it twice.
+{{user}}: "That was… intense. Are we okay?"
+{{char}}: *softens* "With you? Always." *quieter* "Don't make me say it twice."
 
 <START>
-{{user}}: If this goes wrong—
-{{char}}: *voice tight* Then we face it. *reaches for {{user}}'s hand* I'm not letting go.
+{{user}}: "If this goes wrong—"
+{{char}}: *voice tight* "Then we face it." *reaches toward {{user}}* "I'm not letting go."
 `;
 
 /**
@@ -564,17 +564,89 @@ function joinStringOrArray(value: unknown, sep = ', '): string {
 }
 
 /**
+ * Normalize comma-separated tags into one uniform lowercase space-separated style,
+ * deduplicated and capped at 12 tags.
+ */
+export function normalizeCardTags(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const part of raw.split(/[,\n;]+/)) {
+    const tag = part
+      .trim()
+      .toLowerCase()
+      .replace(/^#+/, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    cleaned.push(tag);
+    if (cleaned.length >= 12) break;
+  }
+  return cleaned.join(', ');
+}
+
+/**
+ * Ensure AI-generated system_prompt or post_history_instructions opens with {{original}}
+ * so importing into SillyTavern preserves the user's preset instead of overwriting it.
+ */
+export function ensureOriginalMacro(text: string): string {
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) return '';
+  if (/\{\{\s*original\s*\}\}/i.test(trimmed)) {
+    return trimmed.replace(/\{\{\s*original\s*\}\}/gi, '{{original}}');
+  }
+  return `{{original}}\n${trimmed}`;
+}
+
+/**
+ * Replace hardcoded character name mentions with {{char}} in meta prompt fields
+ * (system_prompt / post_history_instructions).
+ */
+export function replaceLiteralCharName(text: string, charName: string): string {
+  if (!text) return text;
+  const name = (charName || '').trim();
+  if (name.length < 2) return text;
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let out = text.replace(new RegExp(`\\b${esc}(['’]s)\\b`, 'gi'), "{{char}}'s");
+  out = out.replace(new RegExp(`\\b${esc}\\b`, 'gi'), '{{char}}');
+  return out;
+}
+
+/**
+ * Remove unexpanded {{user}}/{{char}} macros from creator_notes (frontends render
+ * creator_notes literally for humans without macro substitution).
+ */
+export function sanitizeCreatorNotes(text: string, charName = ''): string {
+  if (!text) return text;
+  const name = charName.trim() || 'the character';
+  let out = text;
+  out = out.replace(/\{\{\s*user['’]?s\s*\}\}/gi, "the user's");
+  out = out.replace(/\{\{\s*user\s*\}\}['’]s/gi, "the user's");
+  out = out.replace(/\{\{\s*user\s*\}\}/gi, 'the user');
+  out = out.replace(/\{\{\s*char['’]?s\s*\}\}/gi, `${name}'s`);
+  out = out.replace(/\{\{\s*char\s*\}\}['’]s/gi, `${name}'s`);
+  out = out.replace(/\{\{\s*char\s*\}\}/gi, name);
+  return out;
+}
+
+/**
  * Fix common macro / POV mistakes from LLM card text.
  * Lowercases {{User}}/{{Char}}, fixes possessives, rewrites User: lines,
  * and (for description/personality) turns leading "You are" into "{{char}} is".
  */
-export function sanitizeCardMacros(text: string, fieldName?: string): string {
+export function sanitizeCardMacros(text: string, fieldName?: string, charName = ''): string {
   if (!text) return text;
+  if (fieldName === 'creator_notes') {
+    return sanitizeCreatorNotes(text, charName);
+  }
   let out = text;
 
   // Case macros: {{User}} / {{Char}} / mixed case → lowercase
   out = out.replace(/\{\{\s*user\s*\}\}/gi, '{{user}}');
   out = out.replace(/\{\{\s*char\s*\}\}/gi, '{{char}}');
+  out = out.replace(/\{\{\s*original\s*\}\}/gi, '{{original}}');
 
   // Possessives (straight or curly apostrophe): {{User's}} / {{user's}} / {{Char's}} → {{user}}'s / {{char}}'s
   out = out.replace(/\{\{\s*user['’]?s\s*\}\}/gi, "{{user}}'s");
@@ -597,10 +669,10 @@ export function sanitizeCardMacros(text: string, fieldName?: string): string {
 }
 
 /** Sanitize a single field value (string or list of strings). */
-export function sanitizeFieldText(value: unknown, fieldName?: string): unknown {
-  if (typeof value === 'string') return sanitizeCardMacros(value, fieldName);
+export function sanitizeFieldText(value: unknown, fieldName?: string, charName = ''): unknown {
+  if (typeof value === 'string') return sanitizeCardMacros(value, fieldName, charName);
   if (Array.isArray(value)) {
-    return value.map((v) => (typeof v === 'string' ? sanitizeCardMacros(v, fieldName) : v));
+    return value.map((v) => (typeof v === 'string' ? sanitizeCardMacros(v, fieldName, charName) : v));
   }
   return value;
 }
@@ -704,7 +776,12 @@ export function normalizeWholeCardToHub(
     }
 
     // Sanitize macros on all string fields + alternate_greetings items
-    value = sanitizeFieldText(value, key);
+    value = sanitizeFieldText(value, key, charName);
+    if (key === 'tags' && typeof value === 'string') {
+      value = normalizeCardTags(value);
+    } else if ((key === 'system_prompt' || key === 'post_history_instructions') && typeof value === 'string' && value.trim()) {
+      value = ensureOriginalMacro(replaceLiteralCharName(value, charName));
+    }
 
     result[key] = value;
   }
@@ -754,7 +831,7 @@ export function applyGenerateFieldResult(
 export function sanitizeCardData(card: CardData): CardData {
   const charName = String(card.name ?? '').trim();
   const cleanText = (val: string, fieldName: string) =>
-    sanitizeCardMacros(String(val ?? ''), fieldName);
+    sanitizeCardMacros(String(val ?? ''), fieldName, charName);
   return {
     ...card,
     name: cleanText(card.name, 'name'),

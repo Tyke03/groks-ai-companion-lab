@@ -355,7 +355,7 @@ export function buildV3Envelope(data: CardData, preserved: PreservedData): CardE
       creator_notes_multilingual,
       source: data.source.filter((s) => s.trim()),
       group_only_greetings: data.group_only_greetings.filter((g) => g.trim()),
-      assets,
+      ...(assets.length > 0 ? { assets } : {}),
       creation_date: preserved.creation_date ?? now,
       modification_date: now,
     },

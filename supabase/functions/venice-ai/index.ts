@@ -30,19 +30,26 @@ const corsHeaders = {
    ============================================================ */
 /** SKILL.md: Macros + POV + Relational phrasing + Refine delta. SYSTEM PROMPT ONLY (D4). */
 const CHARACTER_CARD_STUDIO_SKILL_RULES = `CHARACTER CARD STUDIO — HUB RULES (authoritative; mirrors skills/character-card-studio/SKILL.md).
-MACROS
-- Use lowercase {{user}} / {{char}} ONLY.
+MACROS & USER POV
+- Use lowercase {{user}} / {{char}} ONLY in active card fields (NEVER put macros in creator_notes — frontends display creator_notes literally).
 - Possessives: {{user}}'s / {{char}}'s — never {{User's}} / {{user's}}.
-- Ban "The User" / "the user" as nouns — write {{user}}.
+- Ban "The User" / "the user" as nouns in active fields — write {{user}}.
 - Ban User: / Name: speaker labels — use {{user}}: / {{char}}:.
-POV BY FIELD
-- description / personality / scenario: 3rd-person authorial about {{char}}. Banned: "You are...", {{user}} diary.
-- first_mes: IC opener as {{char}} (*actions* + dialogue). Banned: multi-<START>, User: labels.
-- mes_example: {{user}}:/{{char}}: across Block1 Public -> Block2 Private -> Block3 High stakes. Banned: three hellos.
-- system_prompt: 2nd-person meta directives FOR the chat model. Banned: mid-scene RP.
+- Dynamic {{user}} POV: default to gender-neutral {{user}} (they/them/their) UNLESS the Companion Brief or source context explicitly states or clearly implies a specific {{user}} POV (male POV, female POV, etc.) — when implied, keep that POV consistent across all fields.
+UNIFORM DIALOGUE FORMAT
+- Standardize on novel-style "double quotes" for spoken dialogue and *single asterisks* for actions/inner thoughts across first_mes, mes_example, alternate_greetings, group_only_greetings, and system_prompt Format guidance. Never wrap an entire turn (including actions) inside one outer quote pair.
+SINGLE-OWNER FIELD BOUNDARIES (avoid token bloat & stranded rules)
+- description: identity, appearance, physicality, background/history ONLY (2–4 **Header:** Markdown blocks; proofread grammar/typos). NO game rules, win conditions, or chat directives.
+- personality: psychology, temperament, speech/mannerism quirks, mood-shift triggers, and active behavioral boundaries/limits (so critical role/intimacy rules are never stranded in creator_notes).
+- scenario: immediate setting, relationship framing, and core scene mechanics / win conditions (include a concrete tell-based or internal tally cue if a scene tracks counts).
+- first_mes: IC opener as {{char}} ("dialogue" + *actions*). NEVER narrate {{user}}'s actions, speech, arrival, or choices.
+- mes_example: {{user}}:/{{char}}: across Block1 Public -> Block2 Private -> Block3 High stakes. Banned: three hellos, narrating {{user}} inside {{char}}: lines.
+- system_prompt: 2nd-person continuity, voice/format, and rule enforcement FOR the chat model. Open with {{original}} on its own line; use {{char}} (not hardcoded name); do NOT repeat bio/appearance from description.
+- post_history_instructions: open with {{original}} on its own line, then 1–3 crisp sentences/bullets for ONLY the top 1–3 continuity hooks; use {{char}}.
+- creator_notes: 3rd-person human notes for other creators/users ONLY; no {{user}}/{{char}} macros; never add a behavior rule that is missing from personality/scenario/system_prompt.
 RELATIONAL PHRASING
 - Correct: {{char}} is {{user}}'s younger sister / {{char}} is the younger sister of {{user}}.
-- Banned: "the user's sister"; bare "the user"; "your sister" when it means {{user}}'s bond to {{char}}; Wikipedia-bio phrasing.
+- Banned: "the user's sister"; bare "the user" in active fields; "your sister" when it means {{user}}'s bond to {{char}}; Wikipedia-bio phrasing.
 REFINE DELTA RULE (mandatory)
 1. Rules / POV / skill first. 2. Creator critique FIRST — it OVERRIDES any conflicting draft; you MUST actively modify; never copy the draft unchanged when notes conflict; preserve only non-conflicting parts. 3. Then the current draft. 4. Then other card context. 5. Output only field text (or full Hub flat JSON for refine-all).`;
 const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern example dialogue:
@@ -50,8 +57,8 @@ const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern ex
 - Each block starts with <START> alone on its own line.
 - Immediately after <START>, use {{user}}: and {{char}}: speaker labels (never User:, never the character's real name as a label, never Name:).
 - Macros MUST be lowercase {{user}} / {{char}} only. Ban {{User}}, {{Char}}, {{User's}}; use {{user}}'s. Ban "The User". Ban User:/Name: labels.
-- Do NOT wrap entire lines in quotes.
-- Put actions and inner thoughts in single asterisks, SillyTavern-style: *giggles* *she leans in close*
+- Use UNIFORM novel-style formatting matching first_mes and greetings: "double quotes" for spoken dialogue and *single asterisks* for actions and inner thoughts. Never wrap an entire turn (including actions) inside one outer pair of quotes.
+- Never narrate {{user}}'s actions or dialogue inside {{char}}: lines.
 - Do NOT mash actions with semicolons or put the whole exchange on one line.
 - Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker.
 THREE-BLOCK PROGRESSION (required range — not three casual hellos):
@@ -60,14 +67,14 @@ THREE-BLOCK PROGRESSION (required range — not three casual hellos):
 - Block3 High stakes/Vulnerability: pressure, intimacy, risk, or emotional exposure — still in-character.
 `;
 const FIELD_POV_CONTRACT = `FIELD POV CONTRACT (Correct vs Banned):
-description | Correct: 3rd-person authorial about {{char}}. | Banned: "You are…", {{user}} first-person diary.
-personality | Correct: {{char}}-centric traits, quirks, patterns. | Banned: "You are…", {{user}} traits, mid-scene RP.
-scenario | Correct: 3rd-person setting/situation. | Banned: {{user}} diary POV, dialogue scripts.
-first_mes | Correct: IC opening as {{char}} (*actions* + dialogue). | Banned: multi-<START>, User:/Name: labels, OOC notes.
-mes_example | Correct: {{user}}:/{{char}}: with 3-block progression. | Banned: three hellos, User:/real-name labels.
-system_prompt | Correct: 2nd-person meta directives FOR the chat model. | Banned: mid-scene RP, first-person {{user}}.
-post_history_instructions | Correct: short 2nd-person meta reminder. | Banned: long RP scenes.
-creator_notes | Correct: 3rd-person notes for other creators. | Banned: in-character speech, system-prompt directives.
+description | Correct: 3rd-person authorial about {{char}} (identity, appearance, background ONLY). | Banned: "You are…", {{user}} diary, game rules/system directives.
+personality | Correct: {{char}}-centric traits, quirks, mood triggers, active behavioral boundaries. | Banned: "You are…", {{user}} traits, mid-scene RP, duplicate adjectives.
+scenario | Correct: 3rd-person setting, framing, and core mechanics/win conditions. | Banned: {{user}} diary POV, dialogue scripts.
+first_mes | Correct: IC opening as {{char}} ("dialogue" + *actions*). | Banned: multi-<START>, User:/Name: labels, narrating {{user}}'s actions, OOC notes.
+mes_example | Correct: {{user}}:/{{char}}: with 3-block progression ("dialogue" + *actions*). | Banned: three hellos, User:/real-name labels, narrating {{user}} in {{char}}: lines.
+system_prompt | Correct: {{original}} + concise 2nd-person continuity/format/rule directives using {{char}}. | Banned: mid-scene RP, repeating bio/appearance, hardcoded char name, prescribing unused formatting.
+post_history_instructions | Correct: {{original}} + 1–3 short sentences/bullets of top continuity reminders using {{char}}. | Banned: long RP scenes, repeating full rules.
+creator_notes | Correct: 3rd-person human notes for creators/users without macros. | Banned: in-character speech, {{user}}/{{char}} macros, unique rules omitted from active fields.
 `;
 const RELATIONAL_PHRASING_RULES = `RELATIONAL PHRASING (description / personality / scenario — anywhere a relationship is stated):
 Correct:
@@ -76,7 +83,7 @@ Correct:
 - {{char}} and {{user}} are siblings / rivals / partners (as fits the card)
 Banned:
 - "the user's sister" / "the user's [relation]"
-- bare "the user" as a noun (use {{user}})
+- bare "the user" as a noun in active fields (use {{user}})
 - "your sister" / "your [relation]" when meaning {{user}}'s relation to {{char}}
 - Wikipedia-bio phrasing: "X, the user's Y, is..."
 Prefer stating the bond as {{char}} <-> {{user}} with macros.
@@ -84,8 +91,9 @@ Prefer stating the bond as {{char}} <-> {{user}} with macros.
 const VOICE_ANCHOR_RULES = `VOICE ANCHOR (bake into personality, first_mes, mes_example, system_prompt consistently):
 1) Dynamic: define how {{char}} relates to {{user}} vs the world (power, warmth, distance, rivalry). Keep it coherent across fields.
 2) Speech quirks: 2–4 durable verbal/mannerism tells that recur in first_mes + mes_example + system_prompt.
-3) 3-block progression intent: Public/Casual mask → Private/Core dynamic → High stakes/Vulnerability.
-MACRO RULES (all fields):
+3) 3-block progression intent: Public/Casual mask -> Private/Core dynamic -> High stakes/Vulnerability.
+4) Dynamic {{user}} POV: keep {{user}} gender-neutral (they/them/their) unless the brief or source context explicitly states or clearly implies male/female POV, in which case keep that POV consistent everywhere.
+MACRO RULES (active fields; NOT creator_notes):
 - Use lowercase {{user}} and {{char}} ONLY.
 - Ban {{User}}, {{Char}}, {{User's}}, {{user's}} — write {{user}}'s / {{char}}'s instead.
 - Ban "The User". Ban User: / Name: labels.
@@ -95,35 +103,37 @@ const STATELESS_INSTANCE_PREFACE = `STATELESS CALL CONTEXT (READ FIRST):
 - Your ONLY job is to author, reorganize, or revise SillyTavern CCv2/CCv3 character card fields from the Companion Brief and context tiers below. Never reply in-character as a chat/RP partner unless writing an IC greeting/dialogue field.
 - CONTEXT TIERING RULES:
   * TIER A — AUTHORITATIVE ANCHORS (Locked): Fixed canon. Obey verbatim; NEVER contradict them.
-  * TIER B — RAW SEEDS / BLOBS (Unlocked): Unstructured source material or rough drafts. Extract facts, character DNA, and voice cues; DISCARD raw dump formatting (JSON, W++, key-value lists) and rewrite cleanly in the target field's format rather than copying wording verbatim.
+  * TIER B — RAW SEEDS / BLOBS (Unlocked): Unstructured source material or rough drafts. Extract facts, character DNA, behavioral limits, mechanics, and voice cues; DISCARD raw dump formatting (JSON, W++, key-value lists), fix typos/grammar, and route each detail to its single proper owner field rather than duplicating across fields.
   * Excluded fields are omitted intentionally. Never invent omitted creator metadata.`;
 const CARD_FIELD_BIBLE = `CHARACTER CARD FIELD BIBLE (CCV2/V3 — follow exactly):
 You are an EXPERT CHARACTER CARD AUTHOR, not an RP partner. Never mid-scene roleplay in system_prompt.
 Never write {{user}} first-person into personality, description, scenario, creator_notes, or tags.
 Personality/description = {{char}} traits from an authorial/third-person (or {{char}}-centric) POV.
-FIELDS & LENGTH BUDGETS (hard ceilings for finished text — stay under):
-- name: display name. Keep if provided. Budget ~40 chars.
-- description: appearance, background, abilities, key traits. Flattened Markdown with **Header:** blocks (strip JSON, W++, and key-value dumps). 2-4 sections/paragraphs. Budget <=1600 chars. Authorial POV.
-- personality: ~10 consolidated core traits, patterns, quirks (no conflicting descriptors like "rude, sweet") — NOT {{user}}'s traits. Budget <=900 chars.
-- scenario: setting/situation framing the chat. Budget <=800 chars. Not {{user}} diary.
-- first_mes: {{char}} opening message. *asterisks for actions* + dialogue. Budget <=1400 chars.
-- mes_example: EXACTLY three Ali:Chat / SillyTavern blocks (Baseline voice -> Emotional/conflict range -> High stakes/action turn — NOT three hellos):
+UNIFORM FORMAT: Use "double quotes" for spoken dialogue and *single asterisks* for actions/inner thoughts across first_mes, mes_example, alternate_greetings, group_only_greetings, and system_prompt Format line.
+FIELDS, SINGLE OWNERS & HARD LENGTH BUDGETS (stay strictly under):
+- name: display name. Keep if provided. Budget <=40 chars.
+- description: identity, appearance, physicality, background/history ONLY. Structure as 2–4 flattened Markdown **Header:** blocks (e.g. **Identity:**, **Appearance:**, **Background:**). Strip JSON/W++/raw dumps, proofread grammar (a/an, capitalization). Do NOT put game rules, win conditions, or chat instructions here. Budget <=1600 chars.
+- personality: ~10 consolidated core traits, psychology, speech/mannerism quirks, mood-shift triggers, and active behavioral boundaries/limits (e.g. role/intimacy/agency limits so critical rules are never stranded in creator_notes). No duplicate or contradictory descriptors. Budget <=900 chars.
+- scenario: setting, relationship framing, and core scene mechanics / win conditions (if a contest/counter mechanic exists, include a tell-based or internal tally cue). Do NOT repeat appearance. Budget <=800 chars.
+- first_mes: {{char}} opening message ("dialogue" + *actions*). NEVER narrate {{user}}'s actions, speech, arrival, or choices; leave room for {{user}} to act. Budget <=1400 chars.
+- mes_example: EXACTLY three SillyTavern blocks (Baseline/Public mask -> Private/Core dynamic -> High stakes/Vulnerability — NOT three hellos):
   * <START> alone on its own line
   * Next line begins {{user}}: or {{char}}: (never User:, never the real name)
-  * Dialogue WITHOUT wrapping quotation marks; *actions* and inner thoughts in single asterisks
+  * Uniform "double quotes" for spoken dialogue + *single asterisks* for actions/thoughts (never wrap whole turns in quotes)
+  * Never narrate {{user}}'s actions inside {{char}}: lines
   * Macros lowercase only; {{user}}'s not {{User's}}
   * Budget <=3200 chars total.
-- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line). Each MUST differ from first_mes and each other in power dynamic, relationship stage, or location — never mere rephrasings. Each <=800 chars.
-- group_only_greetings: JSON array of 1-3 group-chat openers acknowledging other characters (for single-field plain text, separate with <START> alone on its own line); or [].
-- system_prompt: Global role/baseline instructions FOR the eventual chat model. Keep distinct from persona prose and post_history_instructions. NOT mid-scene RP. NOT first-person {{user}}. Budget <=1200 chars.
-- post_history_instructions: short bottom-of-context anti-drift reminder. Keep distinct from system_prompt. Budget <=400 chars.
-- creator_notes: English notes for OTHER creators/users (never prompt directives). Budget <=700 chars.
-- tags: 5-12 lowercase deduplicated comma-separated tags. Budget <=250 chars.
-- nickname: short substitute name for {{char}} (e.g. "Seraphine" when name is "Unit_02_Seraphine"); else "".
+- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line). Each MUST differ from first_mes AND from each other in at least TWO of: location/setting, relationship stage, or power dynamic (never a near-rephrase of first_mes). NEVER narrate {{user}}'s actions or prior choices ("you came home late", "watching {{user}} light..."). If an alternate changes the base setting/binding from scenario, add one short carryover sentence explaining how the core dynamic/rules still apply. Each <=800 chars.
+- group_only_greetings: JSON array of 1–3 group-chat openers acknowledging other characters (for single-field plain text, separate with <START> alone on its own line); never narrate {{user}}; or [].
+- system_prompt: ALWAYS open with {{original}} on its own line (preserves the user's chat preset), then concise 2nd-person character continuity, voice/format directives matching "dialogue" + *actions*, and rule enforcement tailored to {{char}}. Use {{char}} (never hardcode the character's name). Do NOT repeat appearance/history from description or full setting from scenario, and do NOT prescribe formatting styles unused in first_mes/mes_example. Budget <=1200 chars.
+- post_history_instructions: ALWAYS open with {{original}} on its own line, then 1–3 crisp sentences/bullets reminding the model of ONLY the top 1–3 continuity hooks (voice/POV, key boundary/mechanic, never narrate {{user}}). Use {{char}}. Budget <=400 chars.
+- creator_notes: 3rd-person English notes for other creators/users ONLY (usage tips, tone/pacing notes, content warnings). NEVER use {{user}} or {{char}} macros here (frontends do not expand them). NEVER introduce a behavioral rule here that is absent from personality/scenario/system_prompt. Budget <=700 chars.
+- tags: 5–12 lowercase space-separated deduplicated tags (uniform style — no mixed hyphens/spaces). Include defining archetype/trait/genre tags, deduplicate near-synonyms, drop obscure coinages. Budget <=250 chars.
+- nickname: short substitute name for {{char}} ONLY when name has titles/prefixes (e.g. "Seraphine" when name is "Unit_02_Seraphine"); else "".
 - source: array of source URL strings if known; else [].
 - creator: creator handle if known; else "".
 - character_version: version string if useful; else "".
-REORGANIZE: ingest ALL context fields — extract misplaced facts from Tier B raw blobs/drafts into the proper fields without contradicting Tier A locked anchors.`;
+REORGANIZE: ingest ALL context fields — route misplaced facts, boundaries, and mechanics from Tier B raw blobs/drafts into their single proper owner field without contradicting Tier A locked anchors.`;
 const CARD_AUTHOR_SYSTEM = `${STATELESS_INSTANCE_PREFACE}
 You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3). You reorganize and enrich incomplete cards into coherent structured JSON. You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt. ALWAYS respond with valid JSON only — no markdown, no explanation.`;
 const CARD_FIELD_SYSTEM = `${STATELESS_INSTANCE_PREFACE}
@@ -153,20 +163,36 @@ const FIELD_MAX_TOKENS: Record<string, number> = {
   creator_notes: 450, tags: 256, nickname: 160, source: 256, creator: 128,
   character_version: 96, post_history_instructions: 350, system_prompt: 700,
 };
+/** Hard character ceilings aligned with CARD_FIELD_BIBLE and CharacterCardBuilder.tsx. */
+const FIELD_CHAR_BUDGETS: Record<string, number> = {
+  name: 60,
+  nickname: 60,
+  description: 1600,
+  personality: 900,
+  scenario: 800,
+  first_mes: 1400,
+  mes_example: 3200,
+  alternate_greetings: 2600,
+  group_only_greetings: 2400,
+  system_prompt: 1200,
+  post_history_instructions: 400,
+  creator_notes: 700,
+  tags: 250,
+};
 const FIELD_POV_SNIPPETS: Record<string, string> = {
-  description: 'POV: 3rd-person authorial about {{char}} in flattened Markdown with **Header:** blocks. Strip JSON/W++. Banned: "You are…", {{user}} diary.',
-  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max; no contradictory adjectives). Banned: "You are…", {{user}} traits.',
-  scenario: 'POV: 3rd-person setting/situation. Banned: {{user}} diary, dialogue scripts.',
-  first_mes: 'POV: in-character opening as {{char}} (*actions* + dialogue). Banned: multi-<START>, User: labels.',
-  mes_example: 'POV: {{user}}:/{{char}}: Ali:Chat (dialogue without wrapping quotes; *actions* in asterisks) across 3 blocks: Baseline voice -> Emotional/conflict range -> High stakes/action turn. Banned: three hellos.',
-  system_prompt: 'POV: 2nd-person global role/baseline directives FOR the chat model. Keep distinct from persona prose and post_history_instructions. Banned: mid-scene RP, {{user}} first-person.',
-  post_history_instructions: 'POV: short 2nd-person bottom-of-context anti-drift reminder for the chat model. Keep distinct from system_prompt.',
-  creator_notes: 'POV: 3rd-person English notes for other creators. Banned: in-character speech, prompt directives.',
-  tags: '5–12 lowercase deduplicated comma-separated categorization tags only.',
+  description: 'POV: 3rd-person authorial about {{char}} in 2–4 flattened Markdown **Header:** blocks (Identity, Appearance, Background ONLY). Strip JSON/W++, proofread typos/a-an. DO NOT RESTATE: game rules, win conditions, or chat instructions.',
+  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max, mood-shift triggers, AND active behavioral/role/intimacy boundaries so nothing strands in creator_notes). No duplicate adjectives. DO NOT RESTATE: physical appearance or setting.',
+  scenario: 'POV: 3rd-person immediate setting, relationship framing, and core scene mechanics / win conditions (include a tell-based or internal tally cue if tracking counts). DO NOT RESTATE: appearance or full backstory.',
+  first_mes: 'POV: in-character opening as {{char}} ("double-quoted dialogue" + *single-asterisk actions*). STRICTLY NEVER narrate {{user}}\'s actions, speech, arrival, or choices. Banned: multi-<START>, User: labels.',
+  mes_example: 'POV: {{user}}:/{{char}}: uniform "double-quoted dialogue" + *single-asterisk actions* across 3 blocks: Baseline/Public -> Private/Core dynamic -> High stakes/Vulnerability. Never narrate {{user}} inside {{char}}: lines. Banned: three hellos.',
+  system_prompt: 'POV: ALWAYS begin with {{original}} on its own line, then concise 2nd-person character continuity, voice/format ("dialogue" + *actions*), and rule/boundary enforcement using {{char}}. DO NOT RESTATE: full appearance/backstory from description or full setting from scenario. Banned: mid-scene RP, hardcoded character name, unused formatting rules.',
+  post_history_instructions: 'POV: ALWAYS begin with {{original}} on its own line, then 1–3 crisp sentences/bullets of ONLY the top 1–3 continuity hooks using {{char}}. DO NOT RESTATE: full bio or full rulebook.',
+  creator_notes: 'POV: 3rd-person human notes for other creators/users (usage tips, pacing notes, content warnings). Banned: {{user}}/{{char}} macros, in-character speech, or any behavioral rule missing from personality/scenario/system_prompt.',
+  tags: '5–12 lowercase space-separated deduplicated tags (uniform style, no hyphens/underscores, include defining traits/genre, dedupe near-synonyms).',
   name: 'Character display name only.',
-  nickname: 'Short substitute name for {{char}} substitution (when name has titles/prefixes); else concise alias.',
-  alternate_greetings: 'Output EXACTLY 3 distinct full openers separated by <START> alone on its own line (no JSON, no array brackets). Each MUST differ from first_mes and each other in power dynamic, relationship stage, or location.',
-  group_only_greetings: 'Output 1–3 group-chat openers acknowledging other characters, separated by <START> alone on its own line (no JSON); or empty.',
+  nickname: 'Short substitute name for {{char}} substitution ONLY when name has titles/prefixes; else empty.',
+  alternate_greetings: 'Output EXACTLY 3 distinct full openers separated by <START> alone on its own line (no JSON, no array brackets), using "dialogue" + *actions*. Each MUST differ from first_mes AND each other in at least 2 of: location, relationship stage, or power dynamic. NEVER narrate {{user}}\'s actions or prior choices. If an alternate changes the scenario\'s binding/setting, include one short carryover sentence explaining how the core dynamic/rules still apply.',
+  group_only_greetings: 'Output 1–3 group-chat openers acknowledging other characters ("dialogue" + *actions*), separated by <START> alone on its own line (no JSON); never narrate {{user}}; or empty.',
   source: 'Source URL strings if known.',
   creator: 'Creator handle if known.',
   character_version: 'Version string if useful.',
@@ -445,13 +471,63 @@ function wholeCardCompletenessError(card: Record<string, unknown>, raw: string):
   return null;
 }
 /* ---------- sanitization (R7) — mirrors src/lib/cardAiFormat.ts ---------- */
-function sanitizeCardText(text: string, fieldName?: string): string {
+function normalizeCardTags(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const part of raw.split(/[,\n;]+/)) {
+    const tag = part
+      .trim()
+      .toLowerCase()
+      .replace(/^#+/, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    cleaned.push(tag);
+    if (cleaned.length >= 12) break;
+  }
+  return cleaned.join(', ');
+}
+function ensureOriginalMacro(text: string): string {
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) return '';
+  if (/\{\{\s*original\s*\}\}/i.test(trimmed)) {
+    return trimmed.replace(/\{\{\s*original\s*\}\}/gi, '{{original}}');
+  }
+  return `{{original}}\n${trimmed}`;
+}
+function replaceLiteralCharName(text: string, charName: string): string {
   if (!text) return text;
+  const name = (charName || '').trim();
+  if (name.length < 2) return text;
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let out = text.replace(new RegExp(`\\b${esc}(['’]s)\\b`, 'gi'), "{{char}}'s");
+  out = out.replace(new RegExp(`\\b${esc}\\b`, 'gi'), '{{char}}');
+  return out;
+}
+function sanitizeCreatorNotes(text: string, charName = ''): string {
+  if (!text) return text;
+  const name = charName.trim() || 'the character';
+  let out = text;
+  out = out.replace(/\{\{\s*user['’]?s\s*\}\}/gi, "the user's");
+  out = out.replace(/\{\{\s*user\s*\}\}['’]s/gi, "the user's");
+  out = out.replace(/\{\{\s*user\s*\}\}/gi, 'the user');
+  out = out.replace(/\{\{\s*char['’]?s\s*\}\}/gi, `${name}'s`);
+  out = out.replace(/\{\{\s*char\s*\}\}['’]s/gi, `${name}'s`);
+  out = out.replace(/\{\{\s*char\s*\}\}/gi, name);
+  return out;
+}
+function sanitizeCardText(text: string, fieldName?: string, charName = ''): string {
+  if (!text) return text;
+  if (fieldName === 'creator_notes') return sanitizeCreatorNotes(text, charName);
   let out = text;
   out = out.replace(/\{\{\s*User\s*\}\}/g, '{{user}}');
   out = out.replace(/\{\{\s*Char\s*\}\}/g, '{{char}}');
   out = out.replace(/\{\{\s*USER\s*\}\}/g, '{{user}}');
   out = out.replace(/\{\{\s*CHAR\s*\}\}/g, '{{char}}');
+  out = out.replace(/\{\{\s*original\s*\}\}/gi, '{{original}}');
   out = out.replace(/\{\{\s*User'?s\s*\}\}/gi, "{{user}}'s");
   out = out.replace(/\{\{\s*user'?s\s*\}\}/g, "{{user}}'s");
   out = out.replace(/\{\{\s*Char'?s\s*\}\}/gi, "{{char}}'s");
@@ -466,6 +542,27 @@ function sanitizeCardText(text: string, fieldName?: string): string {
     out = out.replace(/^(\s*)You are\b/i, '$1{{char}} is');
   }
   return out;
+}
+function findUserNarrationViolation(text: string, fieldKey: string): string | null {
+  if (!text) return null;
+  const greetingFields = new Set(['first_mes', 'alternate_greetings', 'group_only_greetings', 'mes_example']);
+  if (!greetingFields.has(fieldKey)) return null;
+  const scanText = fieldKey === 'mes_example'
+    ? text
+        .split('\n')
+        .filter((line) => !/^\s*\{\{user\}\}\s*:/i.test(line))
+        .join('\n')
+    : text;
+  const patterns = [
+    /\b(?:watching|sees?|watches?|as)\s+\{\{user\}\}\s+(?:light|lights|draw|draws|walk|walks|step|steps|enter|enters|open|opens|close|closes|reach|reaches|touch|touches|say|says|speak|speaks|nod|nods|sit|sits|stand|stands|grab|grabs|pull|pulls|push|pushes|turn|turns|drop|drops)\b[^.!?\n]*/i,
+    /\{\{user\}\}\s+(?:lights|walks|steps|enters|opens|reaches|nods|smiles|laughs|says|speaks|sits|stands|grabs|pulls|pushes|turns|drops|takes|puts|hands|places)\b[^.!?\n]*/i,
+    /"[^"]*\bYou\s+(?:came\s+home|walked\s+in|stepped\s+in|just\s+walked|just\s+got\s+back)\b[^"]*"/i,
+  ];
+  for (const re of patterns) {
+    const m = scanText.match(re);
+    if (m) return m[0].trim().slice(0, 140);
+  }
+  return null;
 }
 function rewriteSpeakerLabels(text: string, charName: string): string {
   if (!text) return text;
@@ -483,11 +580,12 @@ function rewriteSpeakerLabels(text: string, charName: string): string {
 }
 function sanitizeWholeCardFields(card: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...card };
+  const charName = joinStringOrArray(out.name).trim();
   for (const key of CARD_FIELD_ORDER) {
     if (!(key in out)) continue;
     const value = out[key];
-    if (typeof value === 'string') out[key] = sanitizeCardText(value, key);
-    else if (Array.isArray(value)) out[key] = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key) : v));
+    if (typeof value === 'string') out[key] = sanitizeCardText(value, key, charName);
+    else if (Array.isArray(value)) out[key] = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key, charName) : v));
   }
   return out;
 }
@@ -522,9 +620,13 @@ function normalizeWholeCardToHub(card: Record<string, unknown> | null | undefine
       else value = value.map((v) => String(v ?? ''));
     } else if (typeof value !== 'string' && !Array.isArray(value)) value = value == null ? '' : String(value);
     if (key === 'mes_example' || key === 'first_mes') value = rewriteSpeakerLabels(String(value ?? ''), charName);
-    else if (key === 'alternate_greetings' && Array.isArray(value)) value = value.map((v) => rewriteSpeakerLabels(String(v ?? ''), charName));
-    if (typeof value === 'string') value = sanitizeCardText(value, key);
-    else if (Array.isArray(value)) value = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key) : v));
+    else if ((key === 'alternate_greetings' || key === 'group_only_greetings') && Array.isArray(value)) value = value.map((v) => rewriteSpeakerLabels(String(v ?? ''), charName));
+    if (typeof value === 'string') value = sanitizeCardText(value, key, charName);
+    else if (Array.isArray(value)) value = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key, charName) : v));
+    if (key === 'tags' && typeof value === 'string') value = normalizeCardTags(value);
+    else if ((key === 'system_prompt' || key === 'post_history_instructions') && typeof value === 'string' && value.trim()) {
+      value = ensureOriginalMacro(replaceLiteralCharName(value, charName));
+    }
     result[key] = value;
   }
   return result;
@@ -1046,11 +1148,19 @@ function clampTemperature(value: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   return Math.min(1.2, Math.max(0, n));
 }
-function cleanFieldText(raw: string, fieldName: string): string {
+function cleanFieldText(raw: string, fieldName: string, charName = ''): string {
   let text = stripThinkingBlocks(typeof raw === 'string' ? raw.trim() : '');
   const fence = text.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
   if (fence) text = fence[1].trim();
-  return sanitizeCardText(text, fieldName);
+  if (fieldName === 'mes_example' || fieldName === 'first_mes' || fieldName === 'alternate_greetings' || fieldName === 'group_only_greetings') {
+    text = rewriteSpeakerLabels(text, charName);
+  }
+  text = sanitizeCardText(text, fieldName, charName);
+  if (fieldName === 'tags') return normalizeCardTags(text);
+  if ((fieldName === 'system_prompt' || fieldName === 'post_history_instructions') && text.trim()) {
+    return ensureOriginalMacro(replaceLiteralCharName(text, charName));
+  }
+  return text;
 }
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -1186,20 +1296,57 @@ ${text}`;
       const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
       const temperature = clampTemperature(body.temperature, useRefine ? 0.7 : 0.75);
       const policies = (fieldPolicies && typeof fieldPolicies === 'object' ? fieldPolicies : undefined) as FieldPolicyMap;
+      const charName = joinStringOrArray(existingFields?.name).trim();
+      const budget = FIELD_CHAR_BUDGETS[fieldKey];
+      const finalizeField = async (rawContent: string, basePrompt: string, systemPrompt: string, currentProvider: string) => {
+        let cleaned = cleanFieldText(rawContent, fieldKey, charName);
+        let activeProvider = currentProvider;
+        const narrationHit = findUserNarrationViolation(cleaned, fieldKey);
+        const overBudget = typeof budget === 'number' && cleaned.length > Math.round(budget * 1.1);
+        if (narrationHit || overBudget) {
+          const fixes: string[] = [];
+          if (narrationHit) {
+            fixes.push(`Remove {{user}} action narration (flagged: "${narrationHit}") — describe ONLY {{char}} and the environment, leaving room for {{user}} to act.`);
+          }
+          if (overBudget && budget) {
+            fixes.push(`Condense from ${cleaned.length} chars to <= ${budget} chars while keeping every concrete fact, boundary, and required format (**Header:** / <START> / {{original}}).`);
+          }
+          try {
+            const repairPrompt = `${basePrompt}\n\nQUALITY REPAIR PASS (fix ONLY the issues below on this draft and output ONLY the repaired "${fieldKey}" text):\n- ${fixes.join('\n- ')}\n\nDRAFT TO FIX:\n${cleaned}`;
+            const retry = await runCascade({
+              system: systemPrompt,
+              user: repairPrompt,
+              maxTokens: maxTok,
+              temperature: Math.min(temperature, 0.65),
+              providers,
+            });
+            const repaired = cleanFieldText(retry.content, fieldKey, charName);
+            if (repaired.trim()) {
+              cleaned = repaired;
+              activeProvider = retry.provider;
+            }
+          } catch {
+            // Non-fatal: keep the valid initial cleaned result if repair retry fails
+          }
+        }
+        return { cleaned, provider: activeProvider };
+      };
       if (useRefine) {
         const prompt = buildRefinementFieldPrompt(fieldKey, draft, notes, existingFields, isV3, policies)
           + (briefBlock ? `\n\n${briefBlock}` : '');
         const { content, provider } = await runCascade({
           system: CARD_FIELD_REFINE_SYSTEM, user: prompt, maxTokens: maxTok, temperature, providers,
         });
-        return jsonResponse({ result: cleanFieldText(content, fieldKey), fieldName: fieldKey, wholeCardBuilt: false, refined: true, provider });
+        const final = await finalizeField(content, prompt, CARD_FIELD_REFINE_SYSTEM, provider);
+        return jsonResponse({ result: final.cleaned, fieldName: fieldKey, wholeCardBuilt: false, refined: true, provider: final.provider });
       }
       const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3, policies)
         + (briefBlock ? `\n\n${briefBlock}` : '');
       const { content, provider } = await runCascade({
         system: CARD_FIELD_SYSTEM, user: prompt, maxTokens: maxTok, temperature, providers,
       });
-      return jsonResponse({ result: cleanFieldText(content, fieldKey), fieldName: fieldKey, wholeCardBuilt: false, provider });
+      const final = await finalizeField(content, prompt, CARD_FIELD_SYSTEM, provider);
+      return jsonResponse({ result: final.cleaned, fieldName: fieldKey, wholeCardBuilt: false, provider: final.provider });
     }
     /* --- GENERATE ALL (one-shot whole-card; prefer staged client orchestration) --- */
     if (action === 'generate-all') {

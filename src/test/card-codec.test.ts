@@ -210,6 +210,13 @@ describe("V3 draft import/preservation and export", () => {
     expect(exp.warnings.some((w) => w.includes("2 preserved asset(s)"))).toBe(true);
   });
 
+  it("omits assets in V3 export when empty so frontends keep the default icon", () => {
+    const exp = buildV3Envelope({ ...emptyCardData(), name: "IconCheck" }, emptyPreserved());
+    expect(exp.envelope.spec).toBe("chara_card_v3");
+    expect("assets" in exp.envelope.data).toBe(false);
+    expect(exp.envelope.data.assets).toBeUndefined();
+  });
+
   it("warns and omits V3-only fields when downgrading to V2", () => {
     const result = importCard(v3Envelope);
     const exp = buildV2Envelope(result.data, result.preserved);

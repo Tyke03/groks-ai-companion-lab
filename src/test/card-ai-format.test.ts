@@ -8,6 +8,10 @@ import {
   parseWholeCardJson,
   extractCardField,
   applyGenerateFieldResult,
+  normalizeCardTags,
+  ensureOriginalMacro,
+  replaceLiteralCharName,
+  sanitizeCardMacros,
 } from "@/lib/cardAiFormat";
 
 describe("cardAiFormat", () => {
@@ -139,5 +143,22 @@ describe("cardAiFormat", () => {
 
     const serialized = serializeAiStringList(["Alpha\n\nBeta", "Gamma\n\nDelta"]);
     expect(parseAiStringList(serialized, { max: 3 })).toEqual(["Alpha\n\nBeta", "Gamma\n\nDelta"]);
+  });
+
+  it("normalizes tags, preserves {{original}}, replaces literal char name in meta prompts, and strips macros from creator_notes", () => {
+    expect(normalizeCardTags("Succubus, slow-burn, Slow Burn, #demon_girl, succubus, fantasy")).toBe(
+      "succubus, slow burn, demon girl, fantasy",
+    );
+    expect(ensureOriginalMacro("Stay in character.")).toBe("{{original}}\nStay in character.");
+    expect(ensureOriginalMacro("{{Original}}\nStay in character.")).toBe("{{original}}\nStay in character.");
+    expect(replaceLiteralCharName("You are Lila. Keep Lila's voice low.", "Lila")).toBe(
+      "You are {{char}}. Keep {{char}}'s voice low.",
+    );
+    expect(sanitizeCardMacros("Built for {{user}}'s pacing with {{char}}.", "creator_notes", "Lila")).toBe(
+      "Built for the user's pacing with Lila.",
+    );
+    expect(sanitizeCardMacros("Notes for the user only.", "creator_notes", "Lila")).toBe(
+      "Notes for the user only.",
+    );
   });
 });

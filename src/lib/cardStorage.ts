@@ -14,6 +14,7 @@ import {
   type PreservedData,
 } from "./cardTypes";
 import type { CompanionBrief } from "./cardGeneratePipeline";
+import type { FieldPolicies } from "./cardFieldMeta";
 
 export const CARDS_STORAGE_KEY = "ai-companion-hub-cards";
 export const LEGACY_DRAFT_KEY = "ai-companion-hub-card-draft";
@@ -32,6 +33,7 @@ export interface StoredCardSlot {
   importWarnings: string[];
   contentLevel?: 1 | 2 | 3 | 4 | 5;
   brief?: CompanionBrief;
+  fieldPolicies?: FieldPolicies;
 }
 
 export interface CardLibrary {
@@ -86,7 +88,19 @@ export function createEmptySlot(overrides: Partial<StoredCardSlot> = {}): Stored
     importWarnings: overrides.importWarnings ?? [],
     ...(overrides.contentLevel !== undefined ? { contentLevel: overrides.contentLevel } : {}),
     ...(overrides.brief !== undefined ? { brief: overrides.brief } : {}),
+    ...(overrides.fieldPolicies !== undefined ? { fieldPolicies: overrides.fieldPolicies } : {}),
   };
+}
+
+function parseFieldPolicies(raw: unknown): FieldPolicies | undefined {
+  if (!isRecord(raw)) return undefined;
+  const parsed: FieldPolicies = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (isRecord(v) && typeof v.locked === "boolean" && typeof v.useAsContext === "boolean") {
+      parsed[k as keyof CardData] = { locked: v.locked, useAsContext: v.useAsContext };
+    }
+  }
+  return parsed;
 }
 
 function parseSlot(raw: unknown): StoredCardSlot | null {
@@ -128,6 +142,7 @@ function parseSlot(raw: unknown): StoredCardSlot | null {
     brief = parsedBrief;
   }
   const effectiveLevel = contentLevel ?? brief?.contentLevel;
+  const fieldPolicies = parseFieldPolicies(raw.fieldPolicies);
   return {
     id: typeof raw.id === "string" && raw.id ? raw.id : newCardId(),
     label: typeof raw.label === "string" && raw.label.trim() ? raw.label : labelForCard(card),
@@ -139,6 +154,7 @@ function parseSlot(raw: unknown): StoredCardSlot | null {
     importWarnings,
     ...(effectiveLevel !== undefined ? { contentLevel: effectiveLevel } : {}),
     ...(brief !== undefined ? { brief } : {}),
+    ...(fieldPolicies !== undefined ? { fieldPolicies } : {}),
   };
 }
 

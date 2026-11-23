@@ -90,40 +90,49 @@ MACRO RULES (all fields):
 - Ban {{User}}, {{Char}}, {{User's}}, {{user's}} — write {{user}}'s / {{char}}'s instead.
 - Ban "The User". Ban User: / Name: labels.
 `;
+const STATELESS_INSTANCE_PREFACE = `STATELESS CALL CONTEXT (READ FIRST):
+- You are a fresh, stateless AI Companion Hub Character Card Studio authoring call with no prior conversation memory.
+- Your ONLY job is to author, reorganize, or revise SillyTavern CCv2/CCv3 character card fields from the Companion Brief and context tiers below. Never reply in-character as a chat/RP partner unless writing an IC greeting/dialogue field.
+- CONTEXT TIERING RULES:
+  * TIER A — AUTHORITATIVE ANCHORS (Locked): Fixed canon. Obey verbatim; NEVER contradict them.
+  * TIER B — RAW SEEDS / BLOBS (Unlocked): Unstructured source material or rough drafts. Extract facts, character DNA, and voice cues; DISCARD raw dump formatting (JSON, W++, key-value lists) and rewrite cleanly in the target field's format rather than copying wording verbatim.
+  * Excluded fields are omitted intentionally. Never invent omitted creator metadata.`;
 const CARD_FIELD_BIBLE = `CHARACTER CARD FIELD BIBLE (CCV2/V3 — follow exactly):
 You are an EXPERT CHARACTER CARD AUTHOR, not an RP partner. Never mid-scene roleplay in system_prompt.
 Never write {{user}} first-person into personality, description, scenario, creator_notes, or tags.
 Personality/description = {{char}} traits from an authorial/third-person (or {{char}}-centric) POV.
 FIELDS & LENGTH BUDGETS (hard ceilings for finished text — stay under):
 - name: display name. Keep if provided. Budget ~40 chars.
-- description: appearance, background, abilities, key traits. 2-4 paragraphs. Budget <=1600 chars. Authorial POV.
-- personality: {{char}} traits, patterns, quirks — NOT {{user}}'s traits. Budget <=900 chars.
+- description: appearance, background, abilities, key traits. Flattened Markdown with **Header:** blocks (strip JSON, W++, and key-value dumps). 2-4 sections/paragraphs. Budget <=1600 chars. Authorial POV.
+- personality: ~10 consolidated core traits, patterns, quirks (no conflicting descriptors like "rude, sweet") — NOT {{user}}'s traits. Budget <=900 chars.
 - scenario: setting/situation framing the chat. Budget <=800 chars. Not {{user}} diary.
 - first_mes: {{char}} opening message. *asterisks for actions* + dialogue. Budget <=1400 chars.
-- mes_example: EXACTLY three SillyTavern blocks (Block1 Public/Casual -> Block2 Private/Core -> Block3 High stakes/Vulnerability — NOT three hellos):
+- mes_example: EXACTLY three Ali:Chat / SillyTavern blocks (Baseline voice -> Emotional/conflict range -> High stakes/action turn — NOT three hellos):
   * <START> alone on its own line
-  * Then {{user}}: / {{char}}: labels (never User:, never the real name)
+  * Next line begins {{user}}: or {{char}}: (never User:, never the real name)
+  * Dialogue WITHOUT wrapping quotation marks; *actions* and inner thoughts in single asterisks
   * Macros lowercase only; {{user}}'s not {{User's}}
-  * *actions* in single asterisks; multi-line exchanges OK
   * Budget <=3200 chars total.
-- alternate_greetings: JSON array of EXACTLY 3 distinct full openers (same style as first_mes). Each <=800 chars.
-- group_only_greetings: JSON array of 1-3 group-chat openers acknowledging other characters; or [].
-- system_prompt: Instructions FOR the eventual chat model. Fill LAST. NOT mid-scene RP. NOT first-person {{user}}. Budget <=1200 chars.
-- post_history_instructions: short after-history reminder. Budget <=400 chars.
-- creator_notes: notes for OTHER creators/users. Budget <=700 chars.
-- tags: comma-separated tags. Budget <=250 chars.
-- nickname: alias if useful; else "".
+- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line). Each MUST differ from first_mes and each other in power dynamic, relationship stage, or location — never mere rephrasings. Each <=800 chars.
+- group_only_greetings: JSON array of 1-3 group-chat openers acknowledging other characters (for single-field plain text, separate with <START> alone on its own line); or [].
+- system_prompt: Global role/baseline instructions FOR the eventual chat model. Keep distinct from persona prose and post_history_instructions. NOT mid-scene RP. NOT first-person {{user}}. Budget <=1200 chars.
+- post_history_instructions: short bottom-of-context anti-drift reminder. Keep distinct from system_prompt. Budget <=400 chars.
+- creator_notes: English notes for OTHER creators/users (never prompt directives). Budget <=700 chars.
+- tags: 5-12 lowercase deduplicated comma-separated tags. Budget <=250 chars.
+- nickname: short substitute name for {{char}} (e.g. "Seraphine" when name is "Unit_02_Seraphine"); else "".
 - source: array of source URL strings if known; else [].
 - creator: creator handle if known; else "".
 - character_version: version string if useful; else "".
-REORGANIZE: ingest ALL labeled current field text even if messy / wrong boxes / overflow. Redistribute into correct fields. Enrich gaps. Invent ONLY what is missing. Stay consistent across fields.
-`;
-const CARD_AUTHOR_SYSTEM = `You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3). You reorganize and enrich incomplete cards into coherent structured JSON. You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt. ALWAYS respond with valid JSON only — no markdown, no explanation.`;
-const CARD_FIELD_SYSTEM = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
+REORGANIZE: ingest ALL context fields — extract misplaced facts from Tier B raw blobs/drafts into the proper fields without contradicting Tier A locked anchors.`;
+const CARD_AUTHOR_SYSTEM = `${STATELESS_INSTANCE_PREFACE}
+You are an expert Character Card author for SillyTavern / TavernAI / Chub (CCV2/V3). You reorganize and enrich incomplete cards into coherent structured JSON. You are NOT an RP partner and you do not write mid-scene roleplay into system_prompt. ALWAYS respond with valid JSON only — no markdown, no explanation.`;
+const CARD_FIELD_SYSTEM = `${STATELESS_INSTANCE_PREFACE}
+${CHARACTER_CARD_STUDIO_SKILL_RULES}
 You are an expert Character Card field author for SillyTavern CCV2/V3.
 Write ONLY the requested field text. No JSON, no markdown fences, no commentary.
 Follow Voice Anchor + POV + relational phrasing + macro rules given in the user prompt.`;
-const CARD_FIELD_REFINE_SYSTEM = `${CHARACTER_CARD_STUDIO_SKILL_RULES}
+const CARD_FIELD_REFINE_SYSTEM = `${STATELESS_INSTANCE_PREFACE}
+${CHARACTER_CARD_STUDIO_SKILL_RULES}
 You are an expert Character Card field editor for SillyTavern CCV2/V3.
 Revise ONLY the requested field draft per the creator critique. The critique OVERRIDES any conflicting draft;
 you MUST actively modify; never copy the draft unchanged when notes conflict.
@@ -139,25 +148,25 @@ const CARD_FIELD_ORDER = [
 const ARRAY_CARD_FIELDS = new Set(['alternate_greetings', 'group_only_greetings', 'source']);
 /** Per-field completion budgets. Targeted generation never inherits the whole-card cap. */
 const FIELD_MAX_TOKENS: Record<string, number> = {
-  name: 64, description: 900, personality: 500, scenario: 500, first_mes: 900,
+  name: 160, description: 900, personality: 500, scenario: 500, first_mes: 900,
   mes_example: 1800, alternate_greetings: 1200, group_only_greetings: 700,
-  creator_notes: 450, tags: 120, nickname: 64, source: 120, creator: 64,
-  character_version: 32, post_history_instructions: 250, system_prompt: 700,
+  creator_notes: 450, tags: 256, nickname: 160, source: 256, creator: 128,
+  character_version: 96, post_history_instructions: 350, system_prompt: 700,
 };
 const FIELD_POV_SNIPPETS: Record<string, string> = {
-  description: 'POV: 3rd-person authorial about {{char}}. Banned: "You are…", {{user}} diary.',
-  personality: 'POV: 3rd-person / {{char}}-centric traits. Banned: "You are…", {{user}} traits.',
+  description: 'POV: 3rd-person authorial about {{char}} in flattened Markdown with **Header:** blocks. Strip JSON/W++. Banned: "You are…", {{user}} diary.',
+  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max; no contradictory adjectives). Banned: "You are…", {{user}} traits.',
   scenario: 'POV: 3rd-person setting/situation. Banned: {{user}} diary, dialogue scripts.',
   first_mes: 'POV: in-character opening as {{char}} (*actions* + dialogue). Banned: multi-<START>, User: labels.',
-  mes_example: 'POV: {{user}}:/{{char}}: Block1 Public/Casual -> Block2 Private/Core -> Block3 High stakes. Banned: three hellos.',
-  system_prompt: 'POV: 2nd-person meta directives FOR the chat model. Banned: mid-scene RP, {{user}} first-person.',
-  post_history_instructions: 'POV: short 2nd-person meta reminder for the chat model.',
-  creator_notes: 'POV: 3rd-person notes for other creators. Banned: in-character speech.',
-  tags: 'Comma-separated categorization tags only.',
+  mes_example: 'POV: {{user}}:/{{char}}: Ali:Chat (dialogue without wrapping quotes; *actions* in asterisks) across 3 blocks: Baseline voice -> Emotional/conflict range -> High stakes/action turn. Banned: three hellos.',
+  system_prompt: 'POV: 2nd-person global role/baseline directives FOR the chat model. Keep distinct from persona prose and post_history_instructions. Banned: mid-scene RP, {{user}} first-person.',
+  post_history_instructions: 'POV: short 2nd-person bottom-of-context anti-drift reminder for the chat model. Keep distinct from system_prompt.',
+  creator_notes: 'POV: 3rd-person English notes for other creators. Banned: in-character speech, prompt directives.',
+  tags: '5–12 lowercase deduplicated comma-separated categorization tags only.',
   name: 'Character display name only.',
-  nickname: 'Optional alias; else empty.',
-  alternate_greetings: 'Three distinct full openers like first_mes (IC as {{char}}).',
-  group_only_greetings: 'Group-chat openers acknowledging others; or empty.',
+  nickname: 'Short substitute name for {{char}} substitution (when name has titles/prefixes); else concise alias.',
+  alternate_greetings: 'Output EXACTLY 3 distinct full openers separated by <START> alone on its own line (no JSON, no array brackets). Each MUST differ from first_mes and each other in power dynamic, relationship stage, or location.',
+  group_only_greetings: 'Output 1–3 group-chat openers acknowledging other characters, separated by <START> alone on its own line (no JSON); or empty.',
   source: 'Source URL strings if known.',
   creator: 'Creator handle if known.',
   character_version: 'Version string if useful.',
@@ -167,12 +176,18 @@ const CARD_JSON_MAX_TOKENS = 8192;
 const PROMPT_VAR_MAX_TOKENS = 512;
 const PROMPT_ALL_VARS_MAX_TOKENS = 2048;
 const RAW_CONTEXT_MAX_CHARS = 120_000;
-/** Every provider gets a ceiling. */
+/** Every provider gets a ceiling (whole-card JSON gets extra headroom for OneProvider/long outputs). */
 const PROVIDER_TIMEOUT_MS = 45_000;
-const VENICE_STALL_MS = 20_000;
+const WHOLE_CARD_TIMEOUT_MS = 90_000;
+const VENICE_STALL_MS = 40_000;
 const VENICE_MAX_WALL_MS = 110_000;
 const VENICE_MAX_ATTEMPTS = 2;
 const VENICE_RETRY_BASE_MS = 700;
+const VENICE_PARAMETERS = {
+  include_venice_system_prompt: false,
+  disable_thinking: true,
+  strip_thinking_response: true,
+};
 /* ============================================================
    PROVIDERS  (Venice, OpenRouter, OneProvider)
    ============================================================ */
@@ -190,7 +205,7 @@ const PROVIDER_URL: Record<ProviderId, string> = {
 const PROVIDER_MODELS_URL: Record<ProviderId, string> = {
   venice: 'https://api.venice.ai/api/v1/models',
   openrouter: 'https://openrouter.ai/api/v1/models',
-  oneprovider: 'https://api.oneprovider.dev/v1/models', // VERIFY against live docs
+  oneprovider: 'https://api.oneprovider.dev/v1/models',
 };
 /**
  * SEED model lists. These are IDs already present in this codebase and are
@@ -205,7 +220,7 @@ const SEED_MODELS: Record<ProviderId, string[]> = {
     'gryphe/mythomax-l2-13b',
     'google/gemma-4-31b-it:free',
   ],
-  oneprovider: ['grok-4.7', 'glm-5.3-flash'],
+  oneprovider: ['grok-4.7', 'glm-5.3-flash', 'deepseek-v4.1-flash-1017'],
 };
 const DEFAULT_PROVIDER_MODEL: Record<ProviderId, string> = {
   venice: 'z-ai-glm-5-3-flash',
@@ -214,9 +229,9 @@ const DEFAULT_PROVIDER_MODEL: Record<ProviderId, string> = {
 };
 /** Providers whose API is known to accept response_format json_object. */
 const PROVIDER_JSON_MODE: Record<ProviderId, boolean> = {
-  venice: false,      // streaming path handled separately; keep conservative
+  venice: true,
   openrouter: true,
-  oneprovider: true,  // VERIFY
+  oneprovider: false,
 };
 const OPENROUTER_HEADERS: Record<string, string> = {
   'HTTP-Referer': 'https://companionhub.app',
@@ -523,27 +538,83 @@ function extractCardField(card: Record<string, unknown>, fieldName: string): unk
   }
   return undefined;
 }
-function formatExistingFieldValue(value: unknown): string | null {
+function formatExistingFieldValue(value: unknown, fieldKey?: string): string | null {
   if (typeof value === 'string') { const t = value.trim(); return t ? t : null; }
-  if (Array.isArray(value)) { const parts = value.map((v) => String(v).trim()).filter(Boolean); return parts.length ? parts.join('\n') : null; }
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => String(v).trim()).filter(Boolean);
+    if (!parts.length) return null;
+    if (fieldKey === 'source') return parts.join(', ');
+    return parts.map((p) => `<START>\n${p}`).join('\n\n');
+  }
   return null;
 }
-function collectContextParts(existingFields: Record<string, unknown> | null | undefined, fieldOrder?: string[]): string[] {
+type FieldPolicyMap = Record<string, { locked?: boolean; useAsContext?: boolean }> | null | undefined;
+function collectContextParts(
+  existingFields: Record<string, unknown> | null | undefined,
+  fieldOrder?: string[],
+  excludeField?: string,
+): string[] {
   const contextParts: string[] = [];
   if (!existingFields || typeof existingFields !== 'object') return contextParts;
   const keys = fieldOrder && fieldOrder.length ? fieldOrder : Object.keys(existingFields);
   for (const key of keys) {
-    const formatted = formatExistingFieldValue(existingFields[key]);
+    if (excludeField && key === excludeField) continue;
+    const formatted = formatExistingFieldValue(existingFields[key], key);
     if (formatted) contextParts.push(`${key}: ${formatted}`);
   }
   if (fieldOrder) {
     for (const [key, value] of Object.entries(existingFields)) {
-      if (fieldOrder.includes(key)) continue;
-      const formatted = formatExistingFieldValue(value);
+      if (fieldOrder.includes(key) || (excludeField && key === excludeField)) continue;
+      const formatted = formatExistingFieldValue(value, key);
       if (formatted) contextParts.push(`${key}: ${formatted}`);
     }
   }
   return contextParts;
+}
+function collectTieredContext(
+  existingFields: Record<string, unknown> | null | undefined,
+  fieldPolicies: FieldPolicyMap,
+  fieldOrder: string[],
+  excludeField?: string,
+): { tierA: string[]; tierB: string[]; hasPolicies: boolean } {
+  const tierA: string[] = [];
+  const tierB: string[] = [];
+  if (!existingFields || typeof existingFields !== 'object') return { tierA, tierB, hasPolicies: false };
+  const hasPolicies = !!(fieldPolicies && typeof fieldPolicies === 'object' && Object.keys(fieldPolicies).length > 0);
+  const allKeys = [...fieldOrder, ...Object.keys(existingFields).filter((k) => !fieldOrder.includes(k))];
+  for (const key of allKeys) {
+    if (excludeField && key === excludeField) continue;
+    const policy = hasPolicies ? fieldPolicies?.[key] : undefined;
+    if (policy && policy.useAsContext === false) continue;
+    const formatted = formatExistingFieldValue(existingFields[key], key);
+    if (!formatted) continue;
+    if (policy?.locked === true) {
+      tierA.push(`[LOCKED ANCHOR] ${key}: ${formatted}`);
+    } else {
+      tierB.push(`${hasPolicies ? '[RAW SEED] ' : ''}${key}: ${formatted}`);
+    }
+  }
+  return { tierA, tierB, hasPolicies };
+}
+function formatTieredContextBlock(
+  existingFields: Record<string, unknown> | null | undefined,
+  fieldPolicies: FieldPolicyMap,
+  emptyLabel: string,
+  excludeField?: string,
+): string {
+  const { tierA, tierB, hasPolicies } = collectTieredContext(existingFields, fieldPolicies, CARD_FIELD_ORDER, excludeField);
+  const sections: string[] = [];
+  if (tierA.length > 0) {
+    sections.push(`TIER A — AUTHORITATIVE CARD ANCHORS (Locked — MUST NOT be contradicted):\n${tierA.join('\n\n')}`);
+  }
+  if (tierB.length > 0) {
+    sections.push(
+      hasPolicies
+        ? `TIER B — SEED / SOURCE MATERIAL (Unlocked — extract facts/voice; discard raw dump formatting/wording):\n${tierB.join('\n\n')}`
+        : `LABELED CURRENT CARD CONTEXT (non-empty fields):\n${tierB.join('\n\n')}`,
+    );
+  }
+  return sections.length > 0 ? sections.join('\n\n') : emptyLabel;
 }
 /* ============================================================
    COMPANION BRIEF (section 10)
@@ -591,21 +662,37 @@ function fieldBibleLine(fieldName: string): string {
   const hit = CARD_FIELD_BIBLE.split('\n').find((l) => l.trim().startsWith(`- ${fieldName}:`));
   return hit ? hit.trim() : `- ${fieldName}: follow CCV2/V3 field bible.`;
 }
-function buildSingleFieldUserPrompt(fieldName: string, existingFields: Record<string, unknown> | null | undefined, isV3: boolean): string {
-  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
-  const contextBlock = contextParts.length > 0
-    ? `LABELED CURRENT CARD CONTEXT (non-empty fields):\n${contextParts.join('\n\n')}`
-    : 'No other fields filled — work from the field name and whatever the companion brief provides.';
+function buildSingleFieldUserPrompt(
+  fieldName: string,
+  existingFields: Record<string, unknown> | null | undefined,
+  isV3: boolean,
+  fieldPolicies?: FieldPolicyMap,
+): string {
+  const contextBlock = formatTieredContextBlock(
+    existingFields,
+    fieldPolicies,
+    'No other fields filled — work from the field name and whatever the companion brief provides.',
+    fieldName,
+  );
+  const policy = fieldPolicies?.[fieldName];
+  const targetSeed =
+    policy?.locked !== true && policy?.useAsContext !== false
+      ? formatExistingFieldValue(existingFields?.[fieldName], fieldName)
+      : null;
+  const targetSeedBlock = targetSeed
+    ? `\nTARGET FIELD RAW SEED for "${fieldName}" (extract facts/intent, discard raw dump structure, and rewrite cleanly in proper "${fieldName}" format — do NOT echo wording verbatim):\n${targetSeed}\n`
+    : '';
   const pov = FIELD_POV_SNIPPETS[fieldName] || 'Follow the field bible for this key.';
-  return `${CARD_FIELD_BIBLE}
+  return `FRESH STATELESS TASK: Write ONLY the "${fieldName}" field for this CCV2/CCV3 character card from the context below.
+${CARD_FIELD_BIBLE}
 ${FIELD_POV_CONTRACT}
 ${VOICE_ANCHOR_RULES}
 ${RELATIONAL_PHRASING_RULES}
 ${fieldName === 'mes_example' ? MES_EXAMPLE_FORMAT_RULES + '\n\n' : ''}TARGET FIELD: ${fieldName}
 FIELD BIBLE: ${fieldBibleLine(fieldName)}
 ${pov}
-${contextBlock}
-TASK: Write ONLY the text for "${fieldName}". Improve quality using the context. Stay consistent with Voice Anchor + POV.
+${contextBlock}${targetSeedBlock}
+TASK: Write ONLY the text for "${fieldName}". Respect Tier A Locked Anchors; extract facts from Tier B seeds without copying dump structure. Stay consistent with Voice Anchor + POV.
 MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}; no The User; no User:/Name: labels.
 ${isV3 ? 'V3 card context.' : 'V2-flat card context.'}
 Respond with ONLY the field text, no JSON, no fences, no commentary.`;
@@ -613,13 +700,17 @@ Respond with ONLY the field text, no JSON, no fences, no commentary.`;
 function buildRefinementFieldPrompt(
   fieldName: string, currentValue: string, notes: string,
   existingFields: Record<string, unknown> | null | undefined, isV3: boolean,
+  fieldPolicies?: FieldPolicyMap,
 ): string {
-  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
-  const contextBlock = contextParts.length > 0
-    ? `LABELED CURRENT CARD CONTEXT (other fields for consistency):\n${contextParts.join('\n\n')}`
-    : 'No other fields filled.';
+  const contextBlock = formatTieredContextBlock(
+    existingFields,
+    fieldPolicies,
+    'No other fields filled.',
+    fieldName,
+  );
   const pov = FIELD_POV_SNIPPETS[fieldName] || 'Follow the field bible for this key.';
-  return `${CARD_FIELD_BIBLE}
+  return `FRESH STATELESS TASK: Revise ONLY the "${fieldName}" field draft per the creator critique.
+${CARD_FIELD_BIBLE}
 ${FIELD_POV_CONTRACT}
 ${VOICE_ANCHOR_RULES}
 ${RELATIONAL_PHRASING_RULES}
@@ -637,32 +728,41 @@ CURRENT DRAFT of "${fieldName}":
 ${currentValue}
 ${contextBlock}
 OUTPUT RULES:
-- Keep the same field type/format (mes_example still exactly three <START> blocks with {{user}}:/{{char}}:; first_mes stays a single opener).
+- Keep the same field type/format (mes_example still exactly three <START> Ali:Chat blocks with {{user}}:/{{char}}:; first_mes stays a single opener; alternate_greetings uses <START> separators).
 - Stay consistent with Voice Anchor + POV + relational phrasing + macro rules.
 - MACRO RULES: lowercase {{user}}/{{char}} only; {{user}}'s not {{User's}}; no The User / the user; no User:/Name: labels.
 ${isV3 ? '- V3 card context.' : '- V2-flat card context.'}
 Respond with ONLY the revised field text, no JSON, no fences, no commentary.`;
 }
-function buildWholeCardUserPrompt(existingFields: Record<string, unknown> | null | undefined, isV3: boolean): string {
-  const contextParts = collectContextParts(existingFields, CARD_FIELD_ORDER);
-  const contextBlock = contextParts.length > 0
-    ? `LABELED CURRENT CARD TEXT (ingest ALL of it — even messy / wrong boxes / overflow. Reorganize into proper fields):\n${contextParts.join('\n\n')}`
-    : 'No fields filled — create a completely original character from scratch.';
-  return `${CARD_FIELD_BIBLE}
+function buildWholeCardUserPrompt(
+  existingFields: Record<string, unknown> | null | undefined,
+  isV3: boolean,
+  fieldPolicies?: FieldPolicyMap,
+): string {
+  const contextBlock = formatTieredContextBlock(
+    existingFields,
+    fieldPolicies,
+    'No fields filled — create a completely original character from scratch.',
+  );
+  return `FRESH STATELESS TASK: Author or reorganize a complete CCV2/CCV3 character card JSON object.
+${CARD_FIELD_BIBLE}
 ${MES_EXAMPLE_FORMAT_RULES}
 TASK: Build a COMPLETE proper Character Card as a single JSON object with these keys:
 ${CARD_FIELD_ORDER.join(', ')}
 ${contextBlock}
-REASONING ORDER: name -> description -> personality -> scenario -> first_mes -> mes_example -> alternate_greetings -> group_only_greetings -> creator_notes -> tags -> nickname/source/creator/version -> post_history_instructions -> system_prompt LAST.
+REASONING ORDER: name/nickname -> description -> personality -> scenario -> first_mes -> mes_example -> alternate_greetings -> group_only_greetings -> system_prompt -> post_history_instructions -> creator_notes -> tags -> source/creator/version.
+CONTEXT RULES:
+- Respect Tier A Locked Anchors verbatim — never contradict them.
+- For Tier B Seed / Source Material, extract facts/character DNA and redistribute misplaced details into the proper fields; discard raw JSON/W++/dump wrappers.
 OUTPUT RULES:
 - Respond with VALID JSON ONLY (no markdown fences, no commentary).
 - mes_example must be a single string with real newlines and exactly three <START> blocks.
-- alternate_greetings must be an array of exactly 3 strings.
+- alternate_greetings must be an array of exactly 3 strings differing in power dynamic, relationship stage, or location.
 - group_only_greetings must be an array (1-3 strings; [] if not useful).
 - source must be an array of strings (or []).
 - Respect every length budget above — you MUST finish the object. Truncation is a hard failure.
-- Personality = {{char}} traits only. Never {{user}} first-person in personality/description/etc.
-- system_prompt = instructions FOR the chat model, not mid-scene RP.
+- Personality = {{char}} traits only (~10 consolidated descriptors max). Never {{user}} first-person in personality/description/etc.
+- system_prompt = global role/baseline directives FOR the chat model; keep distinct from post_history_instructions.
 ${isV3 ? '- Prefer V3 list fields (source, group_only_greetings) as arrays.' : '- Include group_only_greetings as an array when useful; otherwise [].'}`;
 }
 function buildRefineAllAppendix(notes: string): string {
@@ -702,9 +802,9 @@ function formatCascadeFailure(kind: 'whole-card' | 'generic', failures: string[]
 /** Venice streaming with stall + wall-clock watchdog. */
 async function callVeniceStreaming(
   apiKey: string, model: string, systemPrompt: string, userPrompt: string,
-  maxTokens: number, temperature: number,
+  maxTokens: number, temperature: number, jsonMode = false,
 ): Promise<string> {
-  const payload = {
+  const payload: Record<string, unknown> = {
     model,
     messages: [
       { role: 'system', content: systemPrompt },
@@ -713,8 +813,9 @@ async function callVeniceStreaming(
     max_tokens: maxTokens,
     temperature,
     stream: true,
-    venice_parameters: { include_venice_system_prompt: false },
+    venice_parameters: VENICE_PARAMETERS,
   };
+  if (jsonMode && PROVIDER_JSON_MODE.venice) payload.response_format = { type: 'json_object' };
   const controller = new AbortController();
   const started = Date.now();
   let lastChunkAt = started;
@@ -809,9 +910,11 @@ async function callOpenAiCompatible(
     max_tokens: maxTokens,
     temperature,
   };
+  if (provider === 'venice') payload.venice_parameters = VENICE_PARAMETERS;
   if (jsonMode && PROVIDER_JSON_MODE[provider]) payload.response_format = { type: 'json_object' };
+  const timeoutMs = maxTokens >= 4096 ? WHOLE_CARD_TIMEOUT_MS : PROVIDER_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(PROVIDER_URL[provider], {
@@ -825,7 +928,7 @@ async function callOpenAiCompatible(
       signal: controller.signal,
     });
   } catch (e) {
-    if (controller.signal.aborted) throw new Error(`timeout after ${PROVIDER_TIMEOUT_MS}ms`);
+    if (controller.signal.aborted) throw new Error(`timeout after ${timeoutMs}ms`);
     throw e;
   } finally {
     clearTimeout(timer);
@@ -857,7 +960,22 @@ async function runCascade(opts: CascadeOptions): Promise<{ content: string; prov
       veniceLoop: for (let attempt = 1; attempt <= VENICE_MAX_ATTEMPTS; attempt++) {
         for (const model of p.models) {
           try {
-            const content = await callVeniceStreaming(p.key, model, opts.system, opts.user, opts.maxTokens, opts.temperature);
+            let content: string;
+            try {
+              content = await callVeniceStreaming(
+                p.key, model, opts.system, opts.user, opts.maxTokens, opts.temperature, opts.jsonMode === true,
+              );
+            } catch (streamErr) {
+              const streamMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+              if (/stream ended with empty content|connection died with no chunks/i.test(streamMsg)) {
+                console.warn(`Venice SSE returned empty (${model}), falling back to non-streaming call`);
+                content = await callOpenAiCompatible(
+                  'venice', p.key, model, opts.system, opts.user, opts.maxTokens, opts.temperature, opts.jsonMode === true,
+                );
+              } else {
+                throw streamErr;
+              }
+            }
             const bad = opts.validate?.(content);
             if (bad) throw new Error(bad);
             return { content, provider: p.isByok ? 'venice-byok' : 'venice' };
@@ -1056,26 +1174,27 @@ ${text}`;
     }
     /* --- GENERATE SINGLE FIELD (targeted plain text; refine DELTA when notes+draft) --- */
     if (action === 'generate-field') {
-      const { fieldName, existingFields, specVersion, refinementNotes, currentValue } = body;
+      const { fieldName, existingFields, specVersion, refinementNotes, currentValue, fieldPolicies } = body;
       if (!fieldName) return jsonResponse({ error: 'fieldName is required' }, 400);
       const isV3 = specVersion === 'v3' || specVersion === 'V3';
       const fieldKey = String(fieldName);
       const notes = typeof refinementNotes === 'string' ? refinementNotes.trim() : '';
       const clientDraft = typeof currentValue === 'string' ? currentValue : '';
-      const existingDraft = formatExistingFieldValue(existingFields?.[fieldKey]) || '';
+      const existingDraft = formatExistingFieldValue(existingFields?.[fieldKey], fieldKey) || '';
       const draft = clientDraft.trim() || existingDraft;
       const useRefine = notes.length > 0 && draft.length > 0;
       const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 512;
       const temperature = clampTemperature(body.temperature, useRefine ? 0.7 : 0.75);
+      const policies = (fieldPolicies && typeof fieldPolicies === 'object' ? fieldPolicies : undefined) as FieldPolicyMap;
       if (useRefine) {
-        const prompt = buildRefinementFieldPrompt(fieldKey, draft, notes, existingFields, isV3)
+        const prompt = buildRefinementFieldPrompt(fieldKey, draft, notes, existingFields, isV3, policies)
           + (briefBlock ? `\n\n${briefBlock}` : '');
         const { content, provider } = await runCascade({
           system: CARD_FIELD_REFINE_SYSTEM, user: prompt, maxTokens: maxTok, temperature, providers,
         });
         return jsonResponse({ result: cleanFieldText(content, fieldKey), fieldName: fieldKey, wholeCardBuilt: false, refined: true, provider });
       }
-      const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3)
+      const prompt = buildSingleFieldUserPrompt(fieldKey, existingFields, isV3, policies)
         + (briefBlock ? `\n\n${briefBlock}` : '');
       const { content, provider } = await runCascade({
         system: CARD_FIELD_SYSTEM, user: prompt, maxTokens: maxTok, temperature, providers,
@@ -1084,17 +1203,18 @@ ${text}`;
     }
     /* --- GENERATE ALL (one-shot whole-card; prefer staged client orchestration) --- */
     if (action === 'generate-all') {
-      const { existingFields, specVersion, refinementNotes } = body;
+      const { existingFields, specVersion, refinementNotes, fieldPolicies } = body;
       const isV3 = specVersion === 'v3' || specVersion === 'V3';
       const notes = typeof refinementNotes === 'string' ? refinementNotes.trim() : '';
       const useRefine = notes.length > 0;
       const temperature = clampTemperature(body.temperature, 0.7);
-      let prompt = buildWholeCardUserPrompt(existingFields, isV3);
+      const policies = (fieldPolicies && typeof fieldPolicies === 'object' ? fieldPolicies : undefined) as FieldPolicyMap;
+      let prompt = buildWholeCardUserPrompt(existingFields, isV3, policies);
       if (briefBlock) prompt += `\n\n${briefBlock}`;
       if (useRefine) prompt += buildRefineAllAppendix(notes);
       prompt += useRefine
-        ? `\n\nGENERATE-ALL REFINE MODE: Return the complete revised card JSON. Client will apply every field.`
-        : `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every field.`;
+        ? `\n\nGENERATE-ALL REFINE MODE: Return the complete revised card JSON. Client will apply every unlocked field.`
+        : `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every unlocked field.`;
       const { provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, providers, CARD_JSON_MAX_TOKENS, temperature);
       const flatHubCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
       return jsonResponse({ result: flatHubCard, provider, ...(useRefine ? { refined: true } : {}) });

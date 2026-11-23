@@ -39,7 +39,7 @@ export const SEED_MODELS: Record<ProviderId, string[]> = {
     "gryphe/mythomax-l2-13b",
     "google/gemma-4-31b-it:free",
   ],
-  oneprovider: ["grok-4.7", "glm-5.3-flash"],
+  oneprovider: ["grok-4.7", "glm-5.3-flash", "deepseek-v4.1-flash-1017"],
 };
 
 export const DEFAULT_PROVIDER_MODEL: Record<ProviderId, string> = {

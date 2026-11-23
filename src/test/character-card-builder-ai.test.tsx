@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { CharacterCardBuilder } from "@/components/tools/CharacterCardBuilder";
-import { STAGES, runStagedGeneration, seedStrength } from "@/lib/cardGeneratePipeline";
+import { buildFieldContextPayload, runStagedGeneration, seedStrength } from "@/lib/cardGeneratePipeline";
 import { emptyCardData } from "@/lib/cardTypes";
 
 const invokeMock = vi.fn();
@@ -128,13 +128,24 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
 
     fireEvent.click(screen.getByTestId("generate-staged-button"));
 
-    const expectedOrder = STAGES.flatMap((s) => s.fields.map((f) => String(f.field)));
+    const expectedOrder = [
+      "description",
+      "personality",
+      "scenario",
+      "first_mes",
+      "system_prompt",
+      "mes_example",
+      "alternate_greetings",
+      "creator_notes",
+      "post_history_instructions",
+    ];
     await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(expectedOrder.length));
 
     expect(seenCalls.map((c) => c.fieldName)).toEqual(expectedOrder);
 
-    // Stage 2 (scenario) receives Stage 1 (description + personality)
+    // Stage 2 (scenario) receives Stage 1 (description + personality) and pinned name/tags
     const scenarioCall = seenCalls.find((c) => c.fieldName === "scenario")!;
+    expect(scenarioCall.existingFields.name).toBe("Vespera");
     expect(scenarioCall.existingFields.description).toBe("Generated description for {{user}}");
     expect(scenarioCall.existingFields.personality).toBe("Generated personality for {{user}}");
 
@@ -231,5 +242,128 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
     expect(res.aborted).toBe(true);
     expect(res.outcomes.filter((o) => o.status === "filled")).toHaveLength(1);
     expect(seedStrength({ setting: "Dock" })).toBe(10);
+  });
+
+  it("supports 4-state per-field Lock/Context toggles and prevents self-anchoring in Fresh Roll", async () => {
+    invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => ({
+      data: { result: `Fresh ${String(opts.body.fieldName)}`, fieldName: opts.body.fieldName, provider: "venice" },
+      error: null,
+    }));
+
+    render(<CharacterCardBuilder />);
+
+    // Typing manually auto-locks as Pinned Anchor; unlocking turns it into Seed & Rewrite
+    fireEvent.change(screen.getByLabelText(/^Description/i), { target: { value: "Raw seed dump about Mira" } });
+    expect(screen.getByTestId("field-policy-state-description")).toHaveTextContent("Pinned Anchor");
+    expect(screen.getByTestId("generate-field-description")).toBeDisabled();
+
+    // Unlock -> Seed & Rewrite (passes target field in existingFields)
+    fireEvent.click(screen.getByTestId("field-lock-description"));
+    expect(screen.getByTestId("field-policy-state-description")).toHaveTextContent("Seed & Rewrite");
+    expect(screen.getByTestId("generate-field-description")).not.toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("generate-field-description"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1));
+    expect(invokeMock.mock.calls[0][1].body.existingFields.description).toBe("Raw seed dump about Mira");
+
+    // Exclude context -> Fresh Roll (omits target field completely)
+    fireEvent.click(screen.getByTestId("field-context-description"));
+    expect(screen.getByTestId("field-policy-state-description")).toHaveTextContent("Fresh Roll");
+
+    fireEvent.click(screen.getByTestId("generate-field-description"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(2));
+    expect(invokeMock.mock.calls[1][1].body.existingFields.description).toBeUndefined();
+
+    // Lock + Exclude -> Isolated (disables AI Generate and omits from sibling context)
+    fireEvent.click(screen.getByTestId("field-lock-description"));
+    expect(screen.getByTestId("field-policy-state-description")).toHaveTextContent("Isolated");
+    expect(screen.getByTestId("generate-field-description")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("generate-field-personality"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(3));
+    expect(invokeMock.mock.calls[2][1].body.existingFields.description).toBeUndefined();
+  });
+
+  it("opens Whole-Card Launch Popup when content exists and honors Empty-Only vs Rewrite-Unlocked", async () => {
+    invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => ({
+      data: {
+        result: opts.body.fieldName === "alternate_greetings" ? ["A", "B", "C"] : `Gen ${String(opts.body.fieldName)}`,
+        fieldName: opts.body.fieldName,
+        provider: "venice",
+      },
+      error: null,
+    }));
+
+    render(<CharacterCardBuilder />);
+    fireEvent.change(screen.getByLabelText(/^Description/i), { target: { value: "Existing core bio" } });
+
+    fireEvent.click(screen.getByTestId("generate-staged-button"));
+    expect(await screen.findByTestId("whole-card-gen-dialog")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("whole-card-mode-empty-only"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("run-provider-summary")).toBeInTheDocument());
+
+    const calledFields = invokeMock.mock.calls.map((c) => c[1].body.fieldName);
+    expect(calledFields).not.toContain("description");
+    expect((screen.getByLabelText(/^Description/i) as HTMLTextAreaElement).value).toBe("Existing core bio");
+  });
+
+  it("detects unstructured blob on import and blocks unlocked downstream fields from feeding upstream", async () => {
+    const longBlob = "A".repeat(1600) + " raw character lore without headers.";
+    const importPayload = JSON.stringify({
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        name: "Kael",
+        description: longBlob,
+        personality: "Stoic pilot",
+        scenario: "Orbital dock",
+        first_mes: "Docking bay four.",
+        mes_example: "<START>\n{{user}}: Hi\n{{char}}: Stale example",
+      },
+    });
+
+    render(<CharacterCardBuilder />);
+    fireEvent.click(screen.getByRole("button", { name: /Import \(Text\)/i }));
+    fireEvent.change(screen.getByLabelText("Character Card JSON"), { target: { value: importPayload } });
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+
+    await waitFor(() => expect(screen.getByTestId("field-policy-state-description")).toHaveTextContent("Seed & Rewrite"));
+    expect(screen.getByTestId("field-policy-state-personality")).toHaveTextContent("Pinned Anchor");
+    expect(screen.getByTestId("field-policy-state-mes_example")).toHaveTextContent("Isolated");
+
+    // Unlocked downstream mes_example does not pollute upstream personality context
+    const baseCard = {
+      ...emptyCardData(),
+      name: "Kael",
+      description: "Structured desc",
+      personality: "Stoic",
+      mes_example: "<START>\n{{user}}: Hi\n{{char}}: Old dialogue",
+    };
+    const filtered = buildFieldContextPayload(
+      baseCard,
+      {
+        name: { locked: true, useAsContext: true },
+        description: { locked: true, useAsContext: true },
+        personality: { locked: false, useAsContext: false },
+        mes_example: { locked: false, useAsContext: true },
+      },
+      { targetField: "personality" },
+    );
+    expect(filtered.existingFields.mes_example).toBeUndefined();
+
+    // Locked downstream anchor IS deliberately allowed to steer upstream
+    const anchored = buildFieldContextPayload(
+      baseCard,
+      {
+        name: { locked: true, useAsContext: true },
+        description: { locked: true, useAsContext: true },
+        personality: { locked: false, useAsContext: false },
+        mes_example: { locked: true, useAsContext: true },
+      },
+      { targetField: "personality" },
+    );
+    expect(anchored.existingFields.mes_example).toContain("Old dialogue");
   });
 });

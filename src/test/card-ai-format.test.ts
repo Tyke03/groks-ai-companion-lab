@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeAiMultiline,
   parseAiStringList,
+  serializeAiStringList,
   countMesExampleStarts,
   MES_EXAMPLE_FORMAT_RULES,
   parseWholeCardJson,
@@ -107,5 +108,36 @@ describe("cardAiFormat", () => {
     const { value, slicedFromWholeCard } = applyGenerateFieldResult("personality", "dominant brat");
     expect(slicedFromWholeCard).toBe(false);
     expect(value).toBe("dominant brat");
+  });
+
+  it("splits <START> and === GREETING === multi-paragraph openers without chopping internal blank lines", () => {
+    const startDelimited = [
+      "<START>",
+      "*First scene paragraph one.*\n\n\"Dialogue in paragraph two.\"",
+      "<START>",
+      "*Second scene paragraph one.*\n\n\"Another paragraph two.\"",
+      "<START>",
+      "*Third scene paragraph one.*\n\n\"Final paragraph two.\"",
+    ].join("\n");
+    const items = parseAiStringList(startDelimited, { max: 3 });
+    expect(items).toHaveLength(3);
+    expect(items[0]).toContain("First scene paragraph one.");
+    expect(items[0]).toContain("Dialogue in paragraph two.");
+    expect(items[1]).toContain("Second scene paragraph one.");
+    expect(items[2]).toContain("Final paragraph two.");
+
+    const bannerDelimited = [
+      "=== GREETING 1 ===",
+      "Line A\n\nLine B",
+      "=== GREETING 2 ===",
+      "Line C\n\nLine D",
+    ].join("\n");
+    const bannerItems = parseAiStringList(bannerDelimited, { max: 3 });
+    expect(bannerItems).toHaveLength(2);
+    expect(bannerItems[0]).toContain("Line A\n\nLine B");
+    expect(bannerItems[1]).toContain("Line C\n\nLine D");
+
+    const serialized = serializeAiStringList(["Alpha\n\nBeta", "Gamma\n\nDelta"]);
+    expect(parseAiStringList(serialized, { max: 3 })).toEqual(["Alpha\n\nBeta", "Gamma\n\nDelta"]);
   });
 });

@@ -78,6 +78,8 @@ export function normalizeAiMultiline(raw: string): string {
 
 /**
  * Parse AI list values for alternate/group greetings without comma-splitting prose.
+ * Checks explicit delimiters (=== GREETING N ===, <START>) BEFORE blank lines so
+ * multi-paragraph greetings are never chopped in half.
  */
 export function parseAiStringList(value: unknown, opts?: { max?: number }): string[] {
   const max = opts?.max;
@@ -86,8 +88,14 @@ export function parseAiStringList(value: unknown, opts?: { max?: number }): stri
   if (Array.isArray(value)) {
     items = value.map((v) => normalizeAiMultiline(String(v))).filter(Boolean);
   } else if (typeof value === 'string') {
-    const trimmed = value.trim();
+    let trimmed = value.replace(/^\uFEFF/, '').trim();
     if (!trimmed) return [];
+    const fence = trimmed.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
+    if (fence) trimmed = fence[1].trim();
+    if (!trimmed.includes('\n') && /\\n/.test(trimmed)) {
+      trimmed = trimmed.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    }
+
     // Try JSON array first
     if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
       try {
@@ -99,23 +107,40 @@ export function parseAiStringList(value: unknown, opts?: { max?: number }): stri
         // fall through
       }
     }
+
     if (items.length === 0) {
-      const byBlankLine = trimmed
-        .split(/\n\s*\n/)
-        .map((s) => normalizeAiMultiline(s))
-        .filter(Boolean);
-      if (byBlankLine.length > 1) {
-        items = byBlankLine;
-      } else if (/^\s*<START>/m.test(trimmed)) {
-        items = trimmed.split(/^\s*<START>\s*$/m).map((s) => normalizeAiMultiline(s)).filter(Boolean);
+      if (/^\s*===\s*GREETING\b[^=\n]*===\s*$/im.test(trimmed)) {
+        items = trimmed
+          .split(/^\s*===\s*GREETING\b[^=\n]*===\s*$/im)
+          .map((s) => normalizeAiMultiline(s))
+          .filter(Boolean);
+      } else if (/(?:^|\n)\s*<START>\s*(?:\n|$)/i.test(trimmed) || /^\s*<START>/i.test(trimmed)) {
+        items = trimmed
+          .split(/^\s*<START>\s*$/im)
+          .map((s) => normalizeAiMultiline(s))
+          .filter(Boolean);
       } else {
-        items = [normalizeAiMultiline(trimmed)];
+        const byBlankLine = trimmed
+          .split(/\n\s*\n/)
+          .map((s) => normalizeAiMultiline(s))
+          .filter(Boolean);
+        items = byBlankLine.length > 1 ? byBlankLine : [normalizeAiMultiline(trimmed)];
       }
     }
   }
 
   if (typeof max === 'number' && max > 0) items = items.slice(0, max);
   return items;
+}
+
+/** Serialize string[] greetings using explicit <START> delimiters to preserve multi-paragraph structure. */
+export function serializeAiStringList(value: unknown): string {
+  if (!Array.isArray(value)) return typeof value === 'string' ? value.trim() : '';
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean)
+    .map((item) => `<START>\n${item}`)
+    .join('\n\n');
 }
 
 /** Count <START> blocks in mes_example text. */
@@ -662,8 +687,7 @@ export function normalizeWholeCardToHub(
       value = joinStringOrArray(value, ', ');
     } else if (ARRAY_CARD_FIELDS.has(key)) {
       if (typeof value === 'string') {
-        const t = value.trim();
-        value = t ? [t] : [];
+        value = parseAiStringList(value, { max: key === 'source' ? undefined : 3 });
       } else if (!Array.isArray(value)) {
         value = value == null ? [] : [String(value)];
       } else {
@@ -675,7 +699,7 @@ export function normalizeWholeCardToHub(
 
     if (key === 'mes_example' || key === 'first_mes') {
       value = rewriteSpeakerLabels(String(value ?? ''), charName);
-    } else if (key === 'alternate_greetings' && Array.isArray(value)) {
+    } else if ((key === 'alternate_greetings' || key === 'group_only_greetings') && Array.isArray(value)) {
       value = value.map((v) => rewriteSpeakerLabels(String(v ?? ''), charName));
     }
 

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, FileJson, Info, Layers, Link2, ChevronDown, ChevronRight, ListOrdered, Square } from "lucide-react";
+import { Copy, Check, Download, Sparkles, Upload, Loader2, Image, Trash2, Plus, AlertTriangle, WifiOff, Settings2, Eye, EyeOff, FileJson, Info, Layers, Link2, ChevronDown, ChevronRight, ListOrdered, Square, Lock, Unlock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { embedCardInPng, extractCardFromPng } from "@/lib/pngChunk";
@@ -32,9 +32,24 @@ import {
   type CardImportResult,
   type PreservedData,
 } from "@/lib/cardTypes";
-import { normalizeWholeCardToHub, sanitizeCardData } from "@/lib/cardAiFormat";
-import { FIELD_HINTS, ARRAY_FIELDS } from "@/lib/cardFieldMeta";
+import { normalizeWholeCardToHub, sanitizeCardData, serializeAiStringList } from "@/lib/cardAiFormat";
 import {
+  FIELD_HINTS,
+  ARRAY_FIELDS,
+  CARD_DATA_KEYS,
+  defaultPoliciesForBlankCard,
+  defaultPoliciesForImportedCard,
+  getFieldPolicy,
+  hasFieldText,
+  isUnstructuredBlobDescription,
+  policyPresetLabel,
+  resolveEffectivePolicies,
+  type FieldPolicies,
+  type FieldPolicy,
+  type WholeCardRunMode,
+} from "@/lib/cardFieldMeta";
+import {
+  buildFieldContextPayload,
   runStagedGeneration,
   applyFieldResult,
   seedStrength,
@@ -97,9 +112,25 @@ const fieldHasTrimContent = (value: unknown): boolean => {
 /** Serialize current field value for edge refinementNotes currentValue. */
 const fieldCurrentValue = (value: unknown): string => {
   if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map((v) => String(v ?? "")).filter((s) => s.trim()).join("\n");
+  if (Array.isArray(value)) return serializeAiStringList(value);
   return value == null ? "" : String(value);
 };
+
+const BODY_CONTENT_FIELDS: (keyof CardData)[] = [
+  "description",
+  "personality",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "system_prompt",
+  "post_history_instructions",
+  "creator_notes",
+  "alternate_greetings",
+  "group_only_greetings",
+];
+
+const hasBodyContentForWholeCard = (c: CardData): boolean =>
+  BODY_CONTENT_FIELDS.some((k) => hasFieldText(c[k]));
 
 function sanitizeBrief(raw: unknown, fallbackLevel?: ContentLevel): CompanionBrief {
   const b = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -292,6 +323,13 @@ export const CharacterCardBuilder = () => {
   const abortRef = useRef<{ aborted: boolean } | null>(null);
   const [showBrief, setShowBrief] = useState(false);
   const [brief, setBrief] = useState<CompanionBrief>(() => sanitizeBrief(activeSlot.brief, activeSlot.contentLevel));
+  const [fieldPolicies, setFieldPolicies] = useState<FieldPolicies>(
+    () => activeSlot.fieldPolicies ?? defaultPoliciesForBlankCard(),
+  );
+  const [pendingWholeCardGen, setPendingWholeCardGen] = useState<{
+    kind: "staged" | "oneshot";
+    notes?: string;
+  } | null>(null);
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -387,11 +425,12 @@ export const CharacterCardBuilder = () => {
         importWarnings,
         contentLevel: brief.contentLevel,
         brief,
+        fieldPolicies,
       });
       saveCardLibrary(next);
       return next;
     });
-  }, [card, preserved, specVersion, importedFormat, importWarnings, brief]);
+  }, [card, preserved, specVersion, importedFormat, importWarnings, brief, fieldPolicies]);
 
   const pngPreviewUrl = useMemo(() => pngFile ? URL.createObjectURL(pngFile) : null, [pngFile]);
 
@@ -414,12 +453,60 @@ export const CharacterCardBuilder = () => {
     }
   }, [card.creator_notes_multilingual]);
 
+  const applyManualPolicy = (field: keyof CardData, nextValue: unknown, nextCard: CardData) => {
+    setFieldPolicies((prev) => {
+      const current = getFieldPolicy(prev, field);
+      if (field === "creator" || field === "character_version") {
+        return { ...prev, [field]: { locked: true, useAsContext: false } };
+      }
+      if (!hasFieldText(nextValue)) {
+        return {
+          ...prev,
+          [field]: { locked: false, useAsContext: field === "creator_notes" ? false : true },
+        };
+      }
+      if (
+        field === "description" &&
+        typeof nextValue === "string" &&
+        isUnstructuredBlobDescription(nextValue) &&
+        !BODY_CONTENT_FIELDS.some((k) => k !== "description" && hasFieldText(nextCard[k]))
+      ) {
+        return { ...prev, description: { locked: false, useAsContext: true } };
+      }
+      return {
+        ...prev,
+        [field]: {
+          locked: true,
+          useAsContext: field === "creator_notes" ? current.useAsContext : true,
+        },
+      };
+    });
+  };
+
+  const toggleFieldLock = (field: keyof CardData) => {
+    setFieldPolicies((prev) => {
+      const current = getFieldPolicy(prev, field);
+      return { ...prev, [field]: { ...current, locked: !current.locked } };
+    });
+  };
+
+  const toggleFieldContext = (field: keyof CardData) => {
+    setFieldPolicies((prev) => {
+      const current = getFieldPolicy(prev, field);
+      return { ...prev, [field]: { ...current, useAsContext: !current.useAsContext } };
+    });
+  };
+
   const updateField = (field: keyof CardData, value: string) => {
+    const nextCard = { ...card, [field]: value };
     setCard((prev) => ({ ...prev, [field]: value }));
+    applyManualPolicy(field, value, nextCard);
   };
 
   const updateList = (field: keyof CardData, items: string[]) => {
+    const nextCard = { ...card, [field]: items };
     setCard((prev) => ({ ...prev, [field]: items }));
+    applyManualPolicy(field, items, nextCard);
   };
 
   /** Preserved bag for export — optionally embed bound lorebook as character_book. */
@@ -469,10 +556,19 @@ export const CharacterCardBuilder = () => {
   };
 
   const applyImport = (result: CardImportResult) => {
+    const { policies, blobDetected } = defaultPoliciesForImportedCard(result.data);
     setCard(result.data);
     setPreserved(result.preserved);
     setImportedFormat(result.format);
-    setImportWarnings(result.warnings);
+    setFieldPolicies(policies);
+    setImportWarnings(
+      blobDetected
+        ? [
+            ...result.warnings,
+            "Unstructured blob detected in Description — set to Seed & Rewrite (Unlocked + Context) so Generate can redistribute it cleanly.",
+          ]
+        : result.warnings,
+    );
     setSpecVersion(result.format === "v3" ? "v3" : "v2");
   };
 
@@ -568,6 +664,7 @@ export const CharacterCardBuilder = () => {
       importWarnings,
       contentLevel: brief.contentLevel,
       brief,
+      fieldPolicies,
     });
     const next = mutator(flushed);
     saveCardLibrary(next);
@@ -579,6 +676,7 @@ export const CharacterCardBuilder = () => {
     setImportedFormat(slot.importedFormat);
     setImportWarnings(slot.importWarnings);
     setBrief(sanitizeBrief(slot.brief, slot.contentLevel));
+    setFieldPolicies(slot.fieldPolicies ?? defaultPoliciesForBlankCard());
     setFieldProvider({});
     setRunProviders([]);
     setRunUsedFallback(false);
@@ -618,7 +716,20 @@ export const CharacterCardBuilder = () => {
     }
     const refinementNotes = typeof notes === "string" ? notes.trim() : "";
     const useRefine = refinementNotes.length > 0;
+    const targetPolicy = getFieldPolicy(fieldPolicies, fieldName);
+    if (!useRefine && targetPolicy.locked) {
+      toast({
+        title: "Field is locked",
+        description: `Unlock ${String(fieldName)} first before regenerating it with AI.`,
+      });
+      return;
+    }
     const sanitizedCard = sanitizeCardData(card);
+    const { existingFields, fieldPolicies: ctxPolicies } = buildFieldContextPayload(
+      sanitizedCard,
+      fieldPolicies,
+      { targetField: fieldName, isRefine: useRefine },
+    );
     const activeBrief = briefFromState();
     setGeneratingField(fieldName);
     try {
@@ -626,7 +737,8 @@ export const CharacterCardBuilder = () => {
         action: "generate-field",
         fieldName,
         fieldDescription: FIELD_HINTS[fieldName],
-        existingFields: sanitizedCard,
+        existingFields,
+        fieldPolicies: ctxPolicies,
         specVersion,
       };
       if (Object.keys(activeBrief).length > 0) body.brief = activeBrief;
@@ -652,6 +764,18 @@ export const CharacterCardBuilder = () => {
       }
       if (data?.result !== undefined && data?.result !== null && data?.result !== "") {
         setCard((prev) => sanitizeCardData(applyFieldResult(prev, fieldName, data.result)));
+        if (!useRefine) {
+          setFieldPolicies((prev) => {
+            const cur = getFieldPolicy(prev, fieldName);
+            return {
+              ...prev,
+              [fieldName]: {
+                locked: false,
+                useAsContext: cur.useAsContext,
+              },
+            };
+          });
+        }
         if (data?.provider) {
           setFieldProvider((prev) => ({ ...prev, [fieldName]: String(data.provider) }));
         }
@@ -666,7 +790,7 @@ export const CharacterCardBuilder = () => {
     }
   };
 
-  const handleGenerateAll = async (notes?: string) => {
+  const handleGenerateAll = async (notes?: string, runMode: WholeCardRunMode = "stored") => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
       return;
@@ -681,6 +805,8 @@ export const CharacterCardBuilder = () => {
         card: sanitizeCardData(card),
         brief: briefFromState(),
         specVersion,
+        fieldPolicies,
+        runMode,
         protectExisting: !notes,
         control,
         onFieldStart: (f) => setGeneratingField(String(f)),
@@ -692,6 +818,19 @@ export const CharacterCardBuilder = () => {
       });
       setCard(sanitizeCardData(next));
       const filledOutcomes = outcomes.filter((o) => o.status === "filled");
+      if (filledOutcomes.length > 0) {
+        setFieldPolicies((prev) => {
+          const updatedPolicies = { ...prev };
+          for (const o of filledOutcomes) {
+            const cur = getFieldPolicy(updatedPolicies, o.field);
+            updatedPolicies[o.field] = {
+              locked: false,
+              useAsContext: cur.useAsContext,
+            };
+          }
+          return updatedPolicies;
+        });
+      }
       const usedRaw = filledOutcomes.map((o) => o.provider).filter((p): p is string => !!p);
       recordProvidersFromRun(usedRaw);
       const filled = filledOutcomes.length;
@@ -708,7 +847,7 @@ export const CharacterCardBuilder = () => {
     }
   };
 
-  const handleGenerateOneShot = async (notes?: string) => {
+  const handleGenerateOneShot = async (notes?: string, runMode: WholeCardRunMode = "stored") => {
     if (!supabase) {
       toast({ title: "Unavailable", description: "AI generation is unavailable because Supabase is not configured.", variant: "destructive" });
       return;
@@ -716,13 +855,18 @@ export const CharacterCardBuilder = () => {
     const refinementNotes = typeof notes === "string" ? notes.trim() : "";
     const useRefine = refinementNotes.length > 0;
     const activeBrief = briefFromState();
+    const effective = resolveEffectivePolicies(card, fieldPolicies, useRefine ? "stored" : runMode);
+    const { existingFields, fieldPolicies: ctxPolicies } = buildFieldContextPayload(card, fieldPolicies, {
+      resolvedOverride: effective,
+    });
     setGeneratingOneShot(true);
     setRunProviders([]);
     setRunUsedFallback(false);
     try {
       const body: Record<string, unknown> = {
         action: "generate-all",
-        existingFields: sanitizeCardData(card),
+        existingFields,
+        fieldPolicies: ctxPolicies,
         generationMode: "default",
         specVersion,
       };
@@ -736,29 +880,45 @@ export const CharacterCardBuilder = () => {
       }
       if (data?.result && typeof data.result === "object" && !data.parseError) {
         const flatResult = normalizeWholeCardToHub(data.result as Record<string, unknown>);
+        const keysToApply = Object.entries(flatResult)
+          .filter(([key, value]) => {
+            const k = key as keyof CardData;
+            if (!(k in card)) return false;
+            if (k === "creator" || k === "character_version") return false;
+            if (effective[k]?.locked) return false;
+            return hasFieldText(value);
+          })
+          .map(([key]) => key as keyof CardData);
+
         setCard((prev) => {
           let updated = { ...prev };
-          for (const [key, value] of Object.entries(flatResult)) {
-            if (key in updated) {
-              updated = applyFieldResult(updated, key as keyof CardData, value);
-            }
+          for (const k of keysToApply) {
+            updated = applyFieldResult(updated, k, flatResult[k]);
           }
           return sanitizeCardData(updated);
+        });
+        setFieldPolicies((prev) => {
+          const next = { ...prev };
+          for (const k of keysToApply) {
+            const cur = getFieldPolicy(next, k);
+            next[k] = { locked: false, useAsContext: cur.useAsContext };
+          }
+          return next;
         });
         if (data?.provider) {
           const p = String(data.provider);
           recordProvidersFromRun([p]);
           const stamped: Partial<Record<keyof CardData, string>> = {};
-          for (const key of Object.keys(flatResult)) {
-            stamped[key as keyof CardData] = p;
+          for (const k of keysToApply) {
+            stamped[k] = p;
           }
           setFieldProvider((prev) => ({ ...prev, ...stamped }));
         }
         toast({
           title: useRefine || data?.refined ? "Refined" : "Generated",
           description: useRefine || data?.refined
-            ? "All fields revised from your notes."
-            : "All fields have been generated/enhanced by AI.",
+            ? "All unlocked fields revised from your notes."
+            : "All unlocked fields have been generated/enhanced by AI.",
         });
       } else if (data?.parseError) {
         toast({
@@ -774,6 +934,23 @@ export const CharacterCardBuilder = () => {
     } finally {
       setGeneratingOneShot(false);
     }
+  };
+
+  const requestWholeCardGen = (kind: "staged" | "oneshot", notes?: string) => {
+    if (!notes && hasBodyContentForWholeCard(card)) {
+      setPendingWholeCardGen({ kind, notes });
+      return;
+    }
+    if (kind === "staged") void handleGenerateAll(notes, "stored");
+    else void handleGenerateOneShot(notes, "stored");
+  };
+
+  const executePendingWholeCardGen = (runMode: WholeCardRunMode) => {
+    const req = pendingWholeCardGen;
+    setPendingWholeCardGen(null);
+    if (!req) return;
+    if (req.kind === "staged") void handleGenerateAll(req.notes, runMode);
+    else void handleGenerateOneShot(req.notes, runMode);
   };
 
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -859,12 +1036,71 @@ export const CharacterCardBuilder = () => {
     setPreserved(emptyPreserved());
     setImportedFormat(null);
     setImportWarnings([]);
+    setFieldPolicies(defaultPoliciesForBlankCard());
     setPngFile(null);
     setFieldProvider({});
     setRunProviders([]);
     setRunUsedFallback(false);
     void deletePortrait(library.activeId);
     toast({ title: "Cleared", description: "Active card fields and portrait reset. Other saved cards are unchanged." });
+  };
+
+  const renderFieldPolicyControls = (fieldKey: keyof CardData) => {
+    const policy = getFieldPolicy(fieldPolicies, fieldKey);
+    const label = policyPresetLabel(policy);
+    return (
+      <div className="inline-flex items-center gap-1">
+        <span
+          className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+            policy.locked
+              ? policy.useAsContext
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                : "border-border bg-secondary/60 text-muted-foreground"
+              : policy.useAsContext
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+          }`}
+          data-testid={`field-policy-state-${String(fieldKey)}`}
+          title={
+            label === "Seed & Rewrite"
+              ? "Unlocked + In Context: AI reads existing text as source seed and rewrites this field"
+              : label === "Fresh Roll"
+                ? "Unlocked + Excluded: AI ignores existing text and generates fresh"
+                : label === "Pinned Anchor"
+                  ? "Locked + In Context: Protected from overwrite and steers other fields"
+                  : "Locked + Excluded: Protected from overwrite and hidden from AI"
+          }
+        >
+          {label}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => toggleFieldLock(fieldKey)}
+          aria-pressed={policy.locked}
+          aria-label={policy.locked ? "Unlock field for AI rewrite" : "Lock field against AI overwrite"}
+          title={policy.locked ? `Locked (${String(fieldKey)}) — click to unlock for AI rewrite` : `Unlocked (${String(fieldKey)}) — click to lock against AI overwrite`}
+          className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+          data-testid={`field-lock-${String(fieldKey)}`}
+        >
+          {policy.locked ? <Lock className="h-3 w-3 text-amber-400" /> : <Unlock className="h-3 w-3" />}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => toggleFieldContext(fieldKey)}
+          aria-pressed={policy.useAsContext}
+          aria-label={policy.useAsContext ? "Exclude field from AI context" : "Include field in AI context"}
+          title={policy.useAsContext ? `Included in AI context (${String(fieldKey)}) — click to exclude` : `Excluded from AI context (${String(fieldKey)}) — click to include`}
+          className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+          data-testid={`field-context-${String(fieldKey)}`}
+        >
+          {policy.useAsContext ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3" />}
+        </Button>
+      </div>
+    );
   };
 
   const v2Fields: { key: keyof CardData; label: string; multiline?: boolean; placeholder: string }[] = [
@@ -1102,7 +1338,7 @@ export const CharacterCardBuilder = () => {
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
-            onClick={() => void handleGenerateAll()}
+            onClick={() => requestWholeCardGen("staged")}
             disabled={generatingAll || generatingOneShot || generatingField !== null || aiUnavailable}
             data-testid="generate-staged-button"
           >
@@ -1133,7 +1369,7 @@ export const CharacterCardBuilder = () => {
           </span>
           <Button
             variant="outline"
-            onClick={() => void handleGenerateOneShot()}
+            onClick={() => requestWholeCardGen("oneshot")}
             disabled={generatingOneShot || generatingAll || generatingField !== null || aiUnavailable}
             data-testid="generate-all-oneshot-button"
           >
@@ -1423,67 +1659,82 @@ export const CharacterCardBuilder = () => {
 
       {/* Fields */}
       <div className="space-y-4">
-        {fields.map((field) => (
-          <div key={field.key}>
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor={`card-field-${field.key}`} className="text-sm font-medium text-foreground">{field.label}</label>
-              <div className="flex items-center gap-2">
-                {recommendedMax[field.key] && (
-                  <CharCountIndicator current={String(card[field.key]).length} max={recommendedMax[field.key]} />
-                )}
-                {generatableFields.has(field.key) && (
-                  <>
-                    <Button variant="ghost" size="sm" onClick={() => handleGenerateField(field.key)} disabled={generatingField === field.key || generatingAll || generatingOneShot || aiUnavailable} className="h-7 px-2 text-xs text-muted-foreground hover:text-primary">
-                      {generatingField === field.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                      {generatingField === field.key ? "Generating..." : "AI Generate"}
-                    </Button>
-                    {fieldProvider[field.key] && (
-                      <span
-                        className="inline-flex items-center rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                        data-testid={`field-provider-${field.key}`}
+        {fields.map((field) => {
+          const isFieldLocked = getFieldPolicy(fieldPolicies, field.key).locked;
+          return (
+            <div key={field.key}>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <label htmlFor={`card-field-${field.key}`} className="text-sm font-medium text-foreground">{field.label}</label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {recommendedMax[field.key] && (
+                    <CharCountIndicator current={String(card[field.key]).length} max={recommendedMax[field.key]} />
+                  )}
+                  {generatableFields.has(field.key) && (
+                    <>
+                      {renderFieldPolicyControls(field.key)}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleGenerateField(field.key)}
+                        disabled={isFieldLocked || generatingField === field.key || generatingAll || generatingOneShot || aiUnavailable}
+                        title={isFieldLocked ? "Field is locked — click the lock icon to allow AI overwrite" : "Generate this field with AI"}
+                        data-testid={`generate-field-${field.key}`}
+                        className="h-7 px-2 text-xs text-muted-foreground hover:text-primary"
                       >
-                        {providerLabel(fieldProvider[field.key])}
-                        {isByokProvider(fieldProvider[field.key]) ? " · BYOK" : ""}
-                      </span>
-                    )}
-                    {fieldHasTrimContent(card[field.key]) && (
-                      <RefinePopover
-                        disabled={generatingField === field.key || generatingAll || generatingOneShot || aiUnavailable}
-                        loading={generatingField === field.key}
-                        onRefine={(notes) => void handleGenerateField(field.key, notes)}
-                        data-testid={`refine-field-${field.key}`}
-                      />
-                    )}
-                  </>
-                )}
+                        {generatingField === field.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                        {generatingField === field.key ? "Generating..." : "AI Generate"}
+                      </Button>
+                      {fieldProvider[field.key] && (
+                        <span
+                          className="inline-flex items-center rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                          data-testid={`field-provider-${field.key}`}
+                        >
+                          {providerLabel(fieldProvider[field.key])}
+                          {isByokProvider(fieldProvider[field.key]) ? " · BYOK" : ""}
+                        </span>
+                      )}
+                      {fieldHasTrimContent(card[field.key]) && (
+                        <RefinePopover
+                          disabled={generatingField === field.key || generatingAll || generatingOneShot || aiUnavailable}
+                          loading={generatingField === field.key}
+                          onRefine={(notes) => void handleGenerateField(field.key, notes)}
+                          data-testid={`refine-field-${field.key}`}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
+              {field.key === "tags" ? (
+                <TagChipEditor
+                  id={`card-field-${field.key}`}
+                  value={card.tags}
+                  onChange={(next) => updateField("tags", next)}
+                  placeholder={field.placeholder}
+                />
+              ) : field.multiline ? (
+                <Textarea id={`card-field-${field.key}`} placeholder={field.placeholder} value={String(card[field.key])} onChange={(e) => updateField(field.key, e.target.value)} className="min-h-[100px] bg-secondary border-border text-sm" />
+              ) : (
+                <Input id={`card-field-${field.key}`} placeholder={field.placeholder} value={String(card[field.key])} onChange={(e) => updateField(field.key, e.target.value)} className="bg-secondary border-border" />
+              )}
             </div>
-            {field.key === "tags" ? (
-              <TagChipEditor
-                id={`card-field-${field.key}`}
-                value={card.tags}
-                onChange={(next) => updateField("tags", next)}
-                placeholder={field.placeholder}
-              />
-            ) : field.multiline ? (
-              <Textarea id={`card-field-${field.key}`} placeholder={field.placeholder} value={String(card[field.key])} onChange={(e) => updateField(field.key, e.target.value)} className="min-h-[100px] bg-secondary border-border text-sm" />
-            ) : (
-              <Input id={`card-field-${field.key}`} placeholder={field.placeholder} value={String(card[field.key])} onChange={(e) => updateField(field.key, e.target.value)} className="bg-secondary border-border" />
-            )}
-          </div>
-        ))}
+          );
+        })}
 
         {/* Alternate greetings list editor */}
         <div>
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
             <span className="text-sm font-medium text-foreground">Alternate Greetings</span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Multiple opening scenarios for the same character</span>
+              {renderFieldPolicyControls("alternate_greetings")}
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => handleGenerateField("alternate_greetings")}
-                disabled={generatingField === "alternate_greetings" || generatingAll || generatingOneShot || aiUnavailable}
+                disabled={getFieldPolicy(fieldPolicies, "alternate_greetings").locked || generatingField === "alternate_greetings" || generatingAll || generatingOneShot || aiUnavailable}
+                title={getFieldPolicy(fieldPolicies, "alternate_greetings").locked ? "Field is locked — click the lock icon to allow AI overwrite" : "Generate alternate greetings with AI"}
+                data-testid="generate-field-alternate_greetings"
                 className="h-7 px-2 text-xs text-muted-foreground hover:text-primary"
               >
                 {generatingField === "alternate_greetings" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
@@ -1534,9 +1785,41 @@ export const CharacterCardBuilder = () => {
               />
             </div>
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                 <span className="text-sm font-medium text-foreground">Group-Only Greetings</span>
-                <span className="text-xs text-muted-foreground">Greetings used only in group chats</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Greetings used only in group chats</span>
+                  {renderFieldPolicyControls("group_only_greetings")}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleGenerateField("group_only_greetings")}
+                    disabled={getFieldPolicy(fieldPolicies, "group_only_greetings").locked || generatingField === "group_only_greetings" || generatingAll || generatingOneShot || aiUnavailable}
+                    title={getFieldPolicy(fieldPolicies, "group_only_greetings").locked ? "Field is locked — click the lock icon to allow AI overwrite" : "Generate group-only greetings with AI"}
+                    data-testid="generate-field-group_only_greetings"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-primary"
+                  >
+                    {generatingField === "group_only_greetings" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                    {generatingField === "group_only_greetings" ? "Generating..." : "AI Generate"}
+                  </Button>
+                  {fieldProvider.group_only_greetings && (
+                    <span
+                      className="inline-flex items-center rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      data-testid="field-provider-group_only_greetings"
+                    >
+                      {providerLabel(fieldProvider.group_only_greetings)}
+                      {isByokProvider(fieldProvider.group_only_greetings) ? " · BYOK" : ""}
+                    </span>
+                  )}
+                  {fieldHasTrimContent(card.group_only_greetings) && (
+                    <RefinePopover
+                      disabled={generatingField === "group_only_greetings" || generatingAll || generatingOneShot || aiUnavailable}
+                      loading={generatingField === "group_only_greetings"}
+                      onRefine={(notes) => void handleGenerateField("group_only_greetings", notes)}
+                      data-testid="refine-field-group_only_greetings"
+                    />
+                  )}
+                </div>
               </div>
               <ListEditor
                 items={card.group_only_greetings}
@@ -1855,6 +2138,68 @@ export const CharacterCardBuilder = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Whole-card generation mode popup when existing body fields are populated */}
+      <Dialog
+        open={pendingWholeCardGen !== null}
+        onOpenChange={(open) => { if (!open) setPendingWholeCardGen(null); }}
+      >
+        <DialogContent data-testid="whole-card-gen-dialog">
+          <DialogTitle>Existing card content detected</DialogTitle>
+          <DialogDescription>
+            Choose how whole-card generation should handle your existing fields. Locked fields stay protected in all modes.
+          </DialogDescription>
+          <div className="space-y-2 py-2">
+            <Button
+              type="button"
+              variant="default"
+              className="w-full justify-start text-left h-auto py-2.5 px-3"
+              onClick={() => executePendingWholeCardGen("empty-only")}
+              data-testid="whole-card-mode-empty-only"
+            >
+              <div>
+                <p className="text-sm font-medium">Generate empty fields only</p>
+                <p className="text-xs opacity-85 font-normal">
+                  Treats filled fields as locked context anchors and writes only blank unlocked fields.
+                </p>
+              </div>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start text-left h-auto py-2.5 px-3"
+              onClick={() => executePendingWholeCardGen("rewrite-with-context")}
+              data-testid="whole-card-mode-rewrite-context"
+            >
+              <div>
+                <p className="text-sm font-medium">Rewrite unlocked fields (use existing as context)</p>
+                <p className="text-xs text-muted-foreground font-normal">
+                  Uses your stored Lock &amp; Context toggles: redistributes unlocked seeds/blobs while keeping locked fields untouched.
+                </p>
+              </div>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start text-left h-auto py-2.5 px-3"
+              onClick={() => executePendingWholeCardGen("rewrite-fresh")}
+              data-testid="whole-card-mode-rewrite-fresh"
+            >
+              <div>
+                <p className="text-sm font-medium">Fresh roll unlocked fields (ignore unlocked drafts)</p>
+                <p className="text-xs text-muted-foreground font-normal">
+                  Rewrites unlocked fields purely from Locked + Context anchors and the Companion Brief.
+                </p>
+              </div>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingWholeCardGen(null)} data-testid="whole-card-mode-cancel">
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete card from library */}
       <AlertDialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>

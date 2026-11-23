@@ -108,7 +108,7 @@ describe("aiProvider live model catalog caching (24h)", () => {
     invokeMock.mockResolvedValue({
       data: {
         models: {
-          venice: [{ id: "zai-org-glm-4.7-flash", name: "GLM 4.7 Flash" }],
+          venice: [{ id: "z-ai-glm-5-3-flash", name: "GLM 5.3 Flash" }],
           openrouter: [{ id: "cognitivecomputations/dolphin-mistral-24b-venice-edition", name: "Venice Uncensored" }],
           oneprovider: [{ id: "grok-4.7", name: "Grok 4.7" }],
         },
@@ -118,7 +118,7 @@ describe("aiProvider live model catalog caching (24h)", () => {
     });
 
     const first = await fetchModelCatalog();
-    expect(first.models.venice?.[0].id).toBe("zai-org-glm-4.7-flash");
+    expect(first.models.venice?.[0].id).toBe("z-ai-glm-5-3-flash");
     expect(invokeMock).toHaveBeenCalledTimes(1);
 
     const second = await fetchModelCatalog();

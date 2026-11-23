@@ -32,7 +32,7 @@ export const PROVIDER_KEYS_URL: Record<ProviderId, string> = {
 };
 
 export const SEED_MODELS: Record<ProviderId, string[]> = {
-  venice: ["zai-org-glm-4.7-flash"],
+  venice: ["z-ai-glm-5-3-flash"],
   openrouter: [
     "cognitivecomputations/dolphin-mistral-24b-venice-edition",
     "sao10k/l3.3-euryale-70b",
@@ -43,7 +43,7 @@ export const SEED_MODELS: Record<ProviderId, string[]> = {
 };
 
 export const DEFAULT_PROVIDER_MODEL: Record<ProviderId, string> = {
-  venice: "zai-org-glm-4.7-flash",
+  venice: "z-ai-glm-5-3-flash",
   openrouter: "cognitivecomputations/dolphin-mistral-24b-venice-edition",
   oneprovider: "grok-4.7",
 };

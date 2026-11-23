@@ -198,7 +198,7 @@ const PROVIDER_MODELS_URL: Record<ProviderId, string> = {
  * DO NOT treat as authoritative — fetch live and cache client-side (24h).
  */
 const SEED_MODELS: Record<ProviderId, string[]> = {
-  venice: ['zai-org-glm-4.7-flash'],
+  venice: ['z-ai-glm-5-3-flash'],
   openrouter: [
     'cognitivecomputations/dolphin-mistral-24b-venice-edition',
     'sao10k/l3.3-euryale-70b',
@@ -208,7 +208,7 @@ const SEED_MODELS: Record<ProviderId, string[]> = {
   oneprovider: ['grok-4.7', 'glm-5.3-flash'],
 };
 const DEFAULT_PROVIDER_MODEL: Record<ProviderId, string> = {
-  venice: 'zai-org-glm-4.7-flash',
+  venice: 'z-ai-glm-5-3-flash',
   openrouter: 'cognitivecomputations/dolphin-mistral-24b-venice-edition',
   oneprovider: 'grok-4.7',
 };

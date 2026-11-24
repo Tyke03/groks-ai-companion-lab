@@ -3,7 +3,7 @@ import { Search, Sparkles, BookOpen, PenLine, Users, FileText, ExternalLink, Che
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { chatbots, categoryLabels } from "@/data/chatbots";
 import { platformDocs } from "@/data/documentation";
-import { blogPosts } from "@/data/blogPosts";
+import { useBlogPosts } from "@/data/useBlogPosts";
 import { communityResources } from "@/data/communityResources";
 import { isOrderedSubsequence } from "@/lib/search";
 import { useNavigate } from "react-router-dom";
@@ -38,6 +38,7 @@ export const GlobalSearch = () => {
   // the first match whenever the query changes so selection never goes stale.
   const [value, setValue] = useState("");
   const navigate = useNavigate();
+  const { data: blogPosts } = useBlogPosts(open);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -84,7 +85,7 @@ export const GlobalSearch = () => {
         action: () => navigate(`/docs/${doc.slug}`),
       });
     }
-    for (const post of blogPosts) {
+    for (const post of blogPosts ?? []) {
       list.push({
         id: `blog-${post.id}`,
         group: "blog",
@@ -105,7 +106,7 @@ export const GlobalSearch = () => {
       });
     }
     return list;
-  }, [navigate]);
+  }, [navigate, blogPosts]);
 
   const filteredGroups = useMemo(() => {
     const groups: Record<Group, SearchResult[]> = {

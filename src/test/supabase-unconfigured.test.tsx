@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { screen, cleanup } from "@testing-library/react";
+import { renderWithQuery as render } from "./renderWithQuery";
 import { MemoryRouter } from "react-router-dom";
 import { DocConsolidator } from "@/components/tools/DocConsolidator";
 import Community from "@/pages/Community";

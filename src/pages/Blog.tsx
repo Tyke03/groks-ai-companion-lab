@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Layout } from "@/components/Layout";
 import { BookOpen, Clock, Tag, ArrowRight } from "lucide-react";
-import { blogPosts, blogCategories } from "@/data/blogPosts";
+import { useBlogPosts } from "@/data/useBlogPosts";
 import { Link } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 
@@ -12,6 +12,8 @@ const formatDate = (iso: string) => {
 
 const Blog = () => {
   const [activeCategory, setActiveCategory] = useState<string>("All");
+  const { data: blogPosts = [], isPending, isError } = useBlogPosts();
+  const blogCategories = [...new Set(blogPosts.map((post) => post.category))];
 
   const filtered =
     activeCategory === "All"
@@ -39,6 +41,8 @@ const Blog = () => {
       </header>
 
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8">
+        {isPending && <p role="status">Loading articles…</p>}
+        {isError && <p role="alert">Articles are temporarily unavailable. Please try again later.</p>}
         {/* Category filters */}
         <div className="flex flex-wrap gap-2 mb-8">
           {["All", ...blogCategories].map((cat) => (

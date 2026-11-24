@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithQuery as render } from "./renderWithQuery";
 import { MemoryRouter } from "react-router-dom";
 import Compare from "@/pages/Compare";
 

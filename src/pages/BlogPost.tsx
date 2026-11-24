@@ -1,8 +1,11 @@
 import { Layout } from "@/components/Layout";
-import { getBlogPost } from "@/data/blogPosts";
+import { useBlogPost } from "@/data/useBlogPosts";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Clock, Tag } from "lucide-react";
 import { Helmet } from "react-helmet-async";
+import DOMPurify from "dompurify";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const formatDate = (iso: string) => {
   const d = new Date(`${iso}T00:00:00`);
@@ -11,13 +14,15 @@ const formatDate = (iso: string) => {
 
 const BlogPost = () => {
   const { id } = useParams<{ id: string }>();
-  const post = id ? getBlogPost(id) : undefined;
+  const { data: post, isPending, isError } = useBlogPost(id);
 
   if (!post) {
     return (
       <Layout>
         <div className="container mx-auto px-4 py-20 text-center">
-          <p className="text-lg text-muted-foreground mb-4">Article not found.</p>
+          <p className="text-lg text-muted-foreground mb-4" role={isError ? "alert" : "status"}>
+            {isPending ? "Loading article…" : isError ? "This article is temporarily unavailable." : "Article not found."}
+          </p>
           <Link to="/blog" className="text-primary hover:underline">
             ← Back to Blog
           </Link>
@@ -29,7 +34,9 @@ const BlogPost = () => {
   return (
     <Layout>
       <Helmet>
-        <title>{post.title} — AI Companion Hub</title>
+        <title>{post.metaTitle || post.title} — AI Companion Hub</title>
+        <meta name="description" content={post.metaDescription || post.excerpt} />
+        <link rel="canonical" href={`https://www.companionhub.app/blog/${post.id}`} />
       </Helmet>
       <header className="border-b border-border">
         <div className="container mx-auto px-4 py-8 sm:py-12 max-w-3xl">
@@ -63,6 +70,18 @@ const BlogPost = () => {
 
       <main id="main-content" tabIndex={-1} className="container mx-auto px-4 py-8 max-w-3xl">
         <article className="prose prose-invert prose-sm sm:prose-base max-w-none">
+          {post.image && <img src={post.image} alt="" className="w-full rounded-xl" referrerPolicy="no-referrer" />}
+          {post.markdown && (
+            <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>{post.markdown}</ReactMarkdown>
+          )}
+          {!post.markdown && post.html && (
+            <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(post.html, {
+              ALLOWED_TAGS: ["h2", "h3", "h4", "p", "ul", "ol", "li", "a", "strong", "b", "em", "i", "br",
+                "hr", "blockquote", "pre", "code", "img", "figure", "figcaption", "table", "thead", "tbody", "tr", "th", "td"],
+              ALLOWED_ATTR: ["href", "src", "alt", "title", "scope", "rowspan", "colspan"],
+              ALLOW_DATA_ATTR: false,
+            }) }} />
+          )}
           {post.sections.map((section, i) => (
             <div key={i} className="mb-6">
               {section.heading && (

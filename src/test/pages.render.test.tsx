@@ -20,7 +20,24 @@ vi.mock("@/integrations/supabase/client", () => ({
     functions: {
       invoke: vi.fn().mockResolvedValue({ data: { ok: true }, error: null }),
     },
-    from: vi.fn(() => ({
+    from: vi.fn((table: string) => table === "blog_posts" ? ({
+      select: vi.fn(() => {
+        let slug: string | undefined;
+        const rows = async () => (await import("@/data/blogPosts")).blogPosts.map((post) => ({
+          ...post, slug: post.id, read_time: post.readTime,
+        }));
+        const query = {
+          eq: (column: string, value: string) => {
+            if (column === "slug") slug = value;
+            return query;
+          },
+          order: () => query,
+          range: async () => ({ data: await rows(), error: null }),
+          maybeSingle: async () => ({ data: (await rows()).find((post) => post.slug === slug) ?? null, error: null }),
+        };
+        return query;
+      }),
+    }) : ({
       select: vi.fn(() => ({
         order: vi.fn(() => ({
           limit: vi.fn(() => Promise.resolve({ data: [], error: null })),
@@ -96,22 +113,22 @@ describe("Directory page", () => {
 });
 
 describe("Blog", () => {
-  it("shows real published articles with no placeholders", () => {
+  it("shows real published articles with no placeholders", async () => {
     renderPage(<Blog />);
-    expect(screen.getByText("SillyTavern vs RisuAI: Which Frontend Should You Run?")).toBeInTheDocument();
+    expect(await screen.findByText("SillyTavern vs RisuAI: Which Frontend Should You Run?")).toBeInTheDocument();
     expect(screen.getByText("How to Create the Perfect Character Card (V2 & V3)")).toBeInTheDocument();
     expect(screen.queryByText(/Coming Soon/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/launching soon/i)).not.toBeInTheDocument();
   });
 
-  it("renders a full article page", () => {
+  it("renders a full article page", async () => {
     renderPage(
       <Routes>
         <Route path="/blog/:id" element={<BlogPost />} />
       </Routes>,
       "/blog/sillytavern-vs-risuai",
     );
-    expect(screen.getByText("SillyTavern vs RisuAI: Which Frontend Should You Run?")).toBeInTheDocument();
+    expect(await screen.findByText("SillyTavern vs RisuAI: Which Frontend Should You Run?")).toBeInTheDocument();
     expect(screen.getByText("Setup and first impressions")).toBeInTheDocument();
     expect(screen.getByText("The verdict")).toBeInTheDocument();
   });

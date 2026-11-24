@@ -1,1 +1,5 @@
 project_id = "aqnmlrpltrsrelydipki"
+
+[functions.ai-seo-crew-blog]
+# AI SEO Crew signs the raw body rather than sending a Supabase JWT.
+verify_jwt = false

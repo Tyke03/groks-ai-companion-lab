@@ -14,6 +14,16 @@ export type Database = {
   }
   public: {
     Tables: {
+      blog_posts: {
+        Row: {
+          slug: string; title: string; excerpt: string; category: string; date: string; read_time: string;
+          tags: string[]; sections: Json; markdown: string | null; html: string | null; image_url: string | null;
+          meta_title: string | null; meta_description: string | null; source: string; status: string;
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       community_cards: {
         Row: { id: string; title: string; description: string; tags: string[]; content_rating: string; card_json: Json; created_at: string; user_id: string | null }
         Insert: { id?: string; title: string; description?: string; tags?: string[]; content_rating?: string; card_json: Json; created_at?: string; user_id?: string | null }

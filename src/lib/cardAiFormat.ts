@@ -634,8 +634,47 @@ export function replaceLiteralCharName(text: string, charName: string): string {
 }
 
 /**
- * Remove unexpanded {{user}}/{{char}} macros from creator_notes (frontends render
- * creator_notes literally for humans without macro substitution).
+ * Balance unclosed single-asterisk action spans (`*...*`) and double-quoted dialogue
+ * spans (`"..."`) per paragraph so an edit or repair pass never leaves broken italics
+ * or quotes that bleed across an entire greeting or example block.
+ */
+export function balanceParagraphDelimiters(text: string, fieldName?: string): string {
+  if (!text) return text;
+  const rpFields = new Set(['first_mes', 'mes_example', 'alternate_greetings', 'group_only_greetings']);
+  if (fieldName && !rpFields.has(fieldName)) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === '<START>' || /^\s*[-*]\s+/.test(line)) return line;
+      let out = line;
+      // Count single asterisks (excluding ** bold pairs)
+      const withoutBold = out.replace(/\*\*/g, '');
+      const starCount = (withoutBold.match(/\*/g) || []).length;
+      if (starCount % 2 === 1) {
+        const quoteIdx = out.indexOf('"');
+        const firstStarIdx = out.indexOf('*');
+        if (quoteIdx > firstStarIdx && firstStarIdx !== -1 && (out.slice(0, quoteIdx).match(/\*/g) || []).length % 2 === 1) {
+          const beforeQuote = out.slice(0, quoteIdx).trimEnd();
+          const rest = out.slice(quoteIdx);
+          out = `${beforeQuote}* ${rest}`;
+        } else {
+          out = `${out.trimEnd()}*`;
+        }
+      }
+      // Count straight double quotes
+      const quoteCount = (out.match(/"/g) || []).length;
+      if (quoteCount % 2 === 1) {
+        out = `${out.trimEnd()}"`;
+      }
+      return out;
+    })
+    .join('\n');
+}
+
+/**
+ * Remove unexpanded {{user}}/{{char}} macros and internal generator jargon ("Content level 5")
+ * from creator_notes (frontends render creator_notes literally for humans without macro substitution).
  */
 export function sanitizeCreatorNotes(text: string, charName = ''): string {
   if (!text) return text;
@@ -647,12 +686,41 @@ export function sanitizeCreatorNotes(text: string, charName = ''): string {
   out = out.replace(/\{\{\s*char['’]?s\s*\}\}/gi, `${name}'s`);
   out = out.replace(/\{\{\s*char\s*\}\}['’]s/gi, `${name}'s`);
   out = out.replace(/\{\{\s*char\s*\}\}/gi, name);
+  out = out.replace(/\bcontent\s+level\s+[1-5]\s*(?:\([^)]*\))?\s*(?:is\s+)?(?:permitted|enabled|allowed|active)?/gi, 'Uncensored/mature themes');
   return out;
+}
+
+/**
+ * Strip redundant paragraph-opening sub-headers (e.g. `**Identity:** `, `### Appearance`,
+ * `**Core:** `, `- *Polished:* `) from description, personality, and scenario so
+ * paragraphs stand cleanly separated by blank lines without wasting characters on
+ * labels inside fields that SillyTavern already wraps in its own section headers.
+ */
+export function stripFieldSubheaders(text: string, fieldName?: string): string {
+  if (!text) return text;
+  if (fieldName !== 'description' && fieldName !== 'personality' && fieldName !== 'scenario') {
+    return text;
+  }
+  const headerWord =
+    '(?:Identity|Appearance|Physical(?:\\s+Appearance)?|Background|Backstory|History|Core(?:\\s+Traits|\\s+Mechanic[^:\\n]*)?|Traits|Psychology|Temperament|Speech(?:\\s*[/&]\\s*Mannerisms)?|Mannerisms|Voice|Mood(?:\\s+Triggers|\\s+Shifts)?|Triggers|Boundaries|Limits|Hard\\s+Limits|Setting|Relationship(?:\\s+Framing)?|Current\\s+Situation|Situation|Stakes|Premise|Overview|Win\\s+Condition|Progression|Rules)';
+  let out = text;
+  // Strip standalone markdown heading lines (`# Identity`, `## Appearance:`, `**Background:**` on its own line)
+  out = out.replace(
+    new RegExp(`(^|\\n)[ \\t]*(?:#{1,4}[ \\t]*${headerWord}[ \\t]*:?|\\*\\*[ \\t]*${headerWord}[ \\t]*:?[ \\t]*\\*\\*[ \\t]*:?)[ \\t]*\\n+`, 'gi'),
+    '$1',
+  );
+  // Strip inline paragraph-leading bold/markdown/plain labels (`**Identity:** `, `**Speech/mannerisms:** `, `#Appearance: `)
+  out = out.replace(
+    new RegExp(`(^|\\n\\s*)(?:\\*\\*\\s*${headerWord}\\s*:?\\s*\\*\\*\\s*:?\\s*|#{1,4}\\s*${headerWord}\\s*:?\\s+|${headerWord}\\s*:\\s+)`, 'gi'),
+    '$1',
+  );
+  return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**
  * Fix common macro / POV mistakes from LLM card text.
  * Lowercases {{User}}/{{Char}}, fixes possessives, rewrites User: lines,
+ * strips redundant sub-headers on description/personality/scenario,
  * and (for description/personality) turns leading "You are" into "{{char}} is".
  */
 export function sanitizeCardMacros(text: string, fieldName?: string, charName = ''): string {
@@ -679,9 +747,24 @@ export function sanitizeCardMacros(text: string, fieldName?: string, charName = 
   out = out.replace(/(^|\n)\s*User\s*:/gi, '$1{{user}}:');
   out = out.replace(/(^|\n)\s*Name\s*:/gi, '$1{{char}}:');
 
+  // description/personality/scenario: strip redundant sub-headers before leading-POV check
+  if (fieldName === 'description' || fieldName === 'personality' || fieldName === 'scenario') {
+    out = stripFieldSubheaders(out, fieldName);
+  }
+
   // description/personality only: leading "You are" → "{{char}} is"
   if (fieldName === 'description' || fieldName === 'personality') {
     out = out.replace(/^(\s*)You are\b/i, '$1{{char}} is');
+  }
+
+  // RP / greeting fields: deterministically balance unclosed * or " per paragraph
+  if (
+    fieldName === 'first_mes' ||
+    fieldName === 'mes_example' ||
+    fieldName === 'alternate_greetings' ||
+    fieldName === 'group_only_greetings'
+  ) {
+    out = balanceParagraphDelimiters(out, fieldName);
   }
 
   return out;

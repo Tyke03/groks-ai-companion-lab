@@ -388,9 +388,11 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
           existingFields: {
             name: working.name,
             description: working.description,
+            personality: working.personality,
             scenario: working.scenario,
             first_mes: working.first_mes,
             mes_example: working.mes_example,
+            system_prompt: working.system_prompt,
           },
           fieldPolicies: effectivePolicies,
         }),

@@ -39,12 +39,12 @@ MACROS & USER POV
 UNIFORM DIALOGUE FORMAT
 - Standardize on novel-style "double quotes" for spoken dialogue and *single asterisks* for actions/inner thoughts across first_mes, mes_example, alternate_greetings, group_only_greetings, and system_prompt Format guidance. Never wrap an entire turn (including actions) inside one outer quote pair.
 SINGLE-OWNER FIELD BOUNDARIES (avoid token bloat & stranded rules)
-- description: identity, appearance, physicality, background/history ONLY (2–4 **Header:** Markdown blocks; proofread grammar/typos). NO game rules, win conditions, or chat directives.
-- personality: psychology, temperament, speech/mannerism quirks, mood-shift triggers, and active behavioral boundaries/limits (so critical role/intimacy rules are never stranded in creator_notes).
-- scenario: immediate setting, relationship framing, and core scene mechanics / win conditions (NEVER use an invisible numeric counter/score — express escalating or contest mechanics as 3–5 NAMED OBSERVABLE STATES with physical/verbal tells).
+- description: identity, appearance, physicality, background/history ONLY, organized into 2–3 clean paragraphs separated by blank lines (Paragraph 1: Identity & role; Paragraph 2: Physical appearance; Paragraph 3: Background & bond with {{user}}). Do NOT write sub-headers like **Identity:** or **Appearance:** — paragraph breaks alone separate them. Proofread grammar/typos. NO game rules, win conditions, or chat directives.
+- personality: psychology, temperament, speech/mannerism quirks, mood-shift triggers, and in-world personal boundaries in 1–2 cohesive prose paragraphs (no **Core:** / **Boundaries:** sub-headers, and no active stage directions or meta-chat rules).
+- scenario: 1–2 clean prose paragraphs of immediate setting, relationship framing, and live scene stakes/tension ONLY (no sub-headers, and do NOT dump multi-stage progression rubrics or rule lists here — those belong ONLY in system_prompt).
 - first_mes: IC opener as {{char}} ("dialogue" + *actions*). NEVER narrate {{user}}'s actions, speech, arrival, or choices.
 - mes_example: {{user}}:/{{char}}: across Block1 Public -> Block2 Private -> Block3 High stakes. Banned: three hellos, narrating {{user}} inside {{char}}: lines.
-- system_prompt: 2nd-person continuity, voice/format, and rule enforcement FOR the chat model. Open with {{original}} on its own line; use {{char}} (not hardcoded name); do NOT repeat bio/appearance from description.
+- system_prompt: 2nd-person continuity, voice/format, and rule/progression enforcement FOR the chat model (including 3–5 NAMED OBSERVABLE STATES with physical/verbal tells when the premise has a slow-burn or contest mechanic — never invisible numeric counters). Open with {{original}} on its own line; use {{char}} (not hardcoded name); do NOT repeat bio/appearance from description.
 - post_history_instructions: open with {{original}} on its own line, then 1–3 crisp sentences/bullets for ONLY the top 1–3 continuity hooks; use {{char}}.
 - creator_notes: 3rd-person human notes for other creators/users ONLY; no {{user}}/{{char}} macros; never add a behavior rule that is missing from personality/scenario/system_prompt.
 RELATIONAL PHRASING
@@ -113,10 +113,10 @@ Personality/description = {{char}} traits from an authorial/third-person (or {{c
 UNIFORM FORMAT: Use "double quotes" for spoken dialogue and *single asterisks* for actions/inner thoughts across first_mes, mes_example, alternate_greetings, group_only_greetings, and system_prompt Format line.
 FIELDS, SINGLE OWNERS & HARD LENGTH BUDGETS (stay strictly under):
 - name: display name. Keep if provided. Budget <=40 chars.
-- description: identity, appearance, physicality, background/history ONLY. Structure as 2–4 flattened Markdown **Header:** blocks (e.g. **Identity:**, **Appearance:**, **Background:**). Strip JSON/W++/raw dumps, proofread grammar (a/an, capitalization). Refer to the player's role as {{user}} (never describe {{user}} as an unnamed stranger). Do NOT put game rules, win conditions, or chat instructions here. Budget <=1600 chars.
-- personality: ~10 consolidated core traits, psychology, speech/mannerism quirks, mood-shift triggers, and active in-world behavioral boundaries/limits (e.g. role/intimacy/agency limits so critical rules are never stranded in creator_notes). No duplicate/contradictory descriptors, and NEVER put meta-chat/RP rules (like "never narrates user actions" or "stays in character") here — those belong ONLY in system_prompt and post_history_instructions. Budget <=900 chars.
-- scenario: setting, relationship framing, and core scene mechanics / win conditions. NEVER use an invisible numeric counter/score ("track a count internally") — instead express any escalating/contest mechanic as 3–5 NAMED OBSERVABLE STATES with physical/verbal tells (e.g. Easy -> Aware -> Charged -> Cracking). Do NOT repeat appearance. Budget <=800 chars.
-- first_mes: {{char}} opening message ("dialogue" + *actions*), using {{char}} instead of hardcoding the character's literal name. NEVER narrate {{user}}'s actions, arrival, gaze, knowledge, or choices — including by alias ("the guest walks in") or collective subjects ("neither looks away", "they both know"). Budget <=1400 chars.
+- description: identity, appearance, physicality, background/history ONLY. Structure as 2–3 clean paragraphs separated ONLY by blank lines (Paragraph 1: identity & role; Paragraph 2: physical appearance; Paragraph 3: background & history with {{user}}). Do NOT add **Header:** or #Header labels — the blank lines separate the sections. Strip JSON/W++/raw dumps, proofread grammar (a/an, capitalization). Refer to the player's role as {{user}} (never describe {{user}} as an unnamed stranger). Do NOT put game rules, win conditions, or chat instructions here. Budget <=2200 chars.
+- personality: ~10 consolidated core traits, psychology, speech/mannerism quirks, mood-shift triggers, and in-world personal boundaries in 1–2 clean paragraphs without sub-headers (**Core:**, **Boundaries:**, etc.). No duplicate/contradictory descriptors, no stage-direction behavior lists that duplicate system_prompt, and NEVER put meta-chat/RP rules (like "never narrates user actions" or "stays in character") here — those belong ONLY in system_prompt and post_history_instructions. Budget <=1300 chars.
+- scenario: 1–2 clean prose paragraphs of immediate setting, relationship framing, and live scene stakes/tension ONLY (no sub-headers like **Setting:** or **Win condition:**). Do NOT put multi-stage progression ladders or AI instruction rubrics here — those belong ONLY in system_prompt. Do NOT repeat appearance. Budget <=1100 chars.
+- first_mes: {{char}} opening message ("dialogue" + *actions*), using {{char}} instead of hardcoding the character's literal name. NEVER narrate {{user}}'s actions, arrival, gaze, knowledge, or choices — including by alias ("the guest walks in") or collective subjects ("neither looks away", "they both know"). Budget <=1800 chars.
 - mes_example: EXACTLY three SillyTavern blocks (Baseline/Public mask -> Private/Core dynamic -> High stakes/Vulnerability — NOT three hellos):
   * <START> alone on its own line
   * Next line begins {{user}}: or {{char}}: (never User:, never the real name)
@@ -124,12 +124,12 @@ FIELDS, SINGLE OWNERS & HARD LENGTH BUDGETS (stay strictly under):
   * Use {{char}} in narration; NEVER narrate {{user}}'s actions/gaze/knowledge inside {{char}}: lines (no "neither looks away" / "they both know")
   * Keep timeline and facts strictly consistent with description and scenario
   * Macros lowercase only; {{user}}'s not {{User's}}
-  * Budget <=3200 chars total.
-- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line), using {{char}}. Each MUST differ from first_mes AND from each other in at least TWO of: location/setting, relationship stage, or power dynamic (never a near-rephrase of first_mes). NEVER narrate {{user}}'s actions, unplayed joint turns ("two rounds in"), or collective awareness ("they both hear it"). If an alternate changes the base setting/binding from scenario, add one short carryover sentence explaining how the core dynamic/rules still apply. Each <=800 chars.
+  * Budget <=3600 chars total.
+- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line), using {{char}}. Each MUST differ from first_mes AND from each other in at least TWO of: location/setting, relationship stage, or power dynamic (never a near-rephrase of first_mes). NEVER narrate {{user}}'s actions, unplayed joint turns ("two rounds in"), or collective awareness ("they both hear it"). If an alternate changes the base setting/binding from scenario, add one short carryover sentence explaining how the core dynamic/rules still apply. Each <=1400 chars.
 - group_only_greetings: JSON array of 1–3 group-chat openers acknowledging other characters ("dialogue" + *actions*, using {{char}}), separated by <START> alone on its own line; never narrate {{user}}; or [].
-- system_prompt: ALWAYS open with {{original}} on its own line (preserves the user's chat preset), then concise 2nd-person character continuity, voice/format directives matching "dialogue" + *actions*, and rule enforcement tailored to {{char}}. Use {{char}} (never hardcode the character's name). Track progression via NAMED OBSERVABLE STATES and tells (never invisible numeric counts). Do NOT repeat appearance/history from description or full setting from scenario, and do NOT prescribe formatting styles unused in first_mes/mes_example. Budget <=1200 chars.
-- post_history_instructions: ALWAYS open with {{original}} on its own line, then 1–3 crisp sentences/bullets reminding the model of ONLY the top 1–3 continuity hooks (voice/POV, named-state progression/boundary, never narrate {{user}}). Use {{char}}. Budget <=400 chars.
-- creator_notes: 3rd-person English notes for other creators/users ONLY (usage tips, tone/pacing notes, content warnings). If the card assumes a specific user persona, role, or gender, include one plain-English line like "Intended user: male 13-0 MMA fighter." NEVER use {{user}} or {{char}} macros here (frontends do not expand them). NEVER introduce a behavioral rule here that is absent from personality/scenario/system_prompt. Budget <=700 chars.
+- system_prompt: ALWAYS open with {{original}} on its own line (preserves the user's chat preset), then concise 2nd-person character continuity, voice/format directives matching "dialogue" + *actions*, and progression/rule enforcement tailored to {{char}}. Use {{char}} (never hardcode the character's name). When the card has a slow-burn, corruption, or contest mechanic, define the 3–5 NAMED OBSERVABLE STATES and their physical/verbal tells HERE (never invisible numeric counts, and do not duplicate the state rubric in scenario). Do NOT repeat appearance/history from description or full setting from scenario, and do NOT prescribe formatting styles unused in first_mes/mes_example. Budget <=1600 chars.
+- post_history_instructions: ALWAYS open with {{original}} on its own line, then 1–3 crisp sentences/bullets reminding the model of ONLY the top 1–3 continuity hooks (voice/POV, active boundary/state, never narrate {{user}}). Use {{char}}. Budget <=550 chars.
+- creator_notes: 3rd-person English notes for other creators/users ONLY (usage tips, tone/pacing notes, content warnings). If the card assumes a specific user persona, role, or gender, include one plain-English line like "Intended user: male 13-0 MMA fighter." If the character is based on or inspired by a real person/public figure, include a brief fictional-portrayal disclaimer ("Fictional roleplay portrayal — not affiliated with or endorsed by the real person."). NEVER use {{user}} or {{char}} macros here (frontends do not expand them), NEVER leak internal generator labels like "Content level 5", and NEVER introduce a behavioral rule here that is absent from personality/scenario/system_prompt. Budget <=900 chars.
 - tags: 5–12 comma-separated lowercase deduplicated tags (use spaces, not hyphens, inside multi-word tags, e.g. "slow burn, monster girl, female character"). Prefer searchable archetype, role, setting, and genre tags; avoid meta-mechanic labels ("tension mechanic") and generic filler ("drama", "ensemble"). Budget <=250 chars.
 - nickname: short substitute name for {{char}} whenever name has multiple words, titles, or prefixes (e.g. "Andrea" for "Andrea Botez", "Seraphine" for "Unit_02_Seraphine"); leave "" only for single-word names.
 - source: array of source URL strings if known; else [].
@@ -160,36 +160,36 @@ const CARD_FIELD_ORDER = [
 const ARRAY_CARD_FIELDS = new Set(['alternate_greetings', 'group_only_greetings', 'source']);
 /** Per-field completion budgets. Targeted generation never inherits the whole-card cap. */
 const FIELD_MAX_TOKENS: Record<string, number> = {
-  name: 160, description: 900, personality: 500, scenario: 500, first_mes: 900,
-  mes_example: 1800, alternate_greetings: 1200, group_only_greetings: 700,
-  creator_notes: 450, tags: 256, nickname: 160, source: 256, creator: 128,
-  character_version: 96, post_history_instructions: 350, system_prompt: 700,
+  name: 160, description: 1000, personality: 600, scenario: 550, first_mes: 950,
+  mes_example: 1900, alternate_greetings: 1600, group_only_greetings: 800,
+  creator_notes: 500, tags: 256, nickname: 160, source: 256, creator: 128,
+  character_version: 96, post_history_instructions: 380, system_prompt: 800,
 };
 /** Hard character ceilings aligned with CARD_FIELD_BIBLE and CharacterCardBuilder.tsx. */
 const FIELD_CHAR_BUDGETS: Record<string, number> = {
   name: 60,
   nickname: 60,
-  description: 1600,
-  personality: 900,
-  scenario: 800,
-  first_mes: 1400,
-  mes_example: 3200,
-  alternate_greetings: 2600,
-  group_only_greetings: 2400,
-  system_prompt: 1200,
-  post_history_instructions: 400,
-  creator_notes: 700,
+  description: 2200,
+  personality: 1300,
+  scenario: 1100,
+  first_mes: 1800,
+  mes_example: 3600,
+  alternate_greetings: 4200,
+  group_only_greetings: 2800,
+  system_prompt: 1600,
+  post_history_instructions: 550,
+  creator_notes: 900,
   tags: 250,
 };
 const FIELD_POV_SNIPPETS: Record<string, string> = {
-  description: 'POV: 3rd-person authorial about {{char}} in 2–4 flattened Markdown **Header:** blocks (Identity, Appearance, Background ONLY). Strip JSON/W++, proofread typos/a-an. Refer to the player\'s role as {{user}} rather than an unnamed stranger. DO NOT RESTATE: game rules, win conditions, or chat instructions.',
-  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max, mood-shift triggers, AND active in-world behavioral/role/intimacy boundaries so nothing strands in creator_notes). No duplicate adjectives. Banned: meta-chat/RP directives ("never narrates actions", "stays in character", formatting rules) — those belong ONLY in system_prompt/PHI. DO NOT RESTATE: physical appearance or setting.',
-  scenario: 'POV: 3rd-person immediate setting, relationship framing, and core scene mechanics / win conditions. NEVER use an invisible numeric counter/score — express progression as 3–5 NAMED OBSERVABLE STATES with physical/verbal tells. DO NOT RESTATE: appearance or full backstory.',
+  description: 'POV: 3rd-person authorial about {{char}} in 2–3 clean paragraphs separated ONLY by blank lines (Paragraph 1: identity & role; Paragraph 2: physical appearance; Paragraph 3: background & history with {{user}}). Do NOT write **Header:** or #Header labels. Strip JSON/W++, proofread typos/a-an. Refer to the player\'s role as {{user}} rather than an unnamed stranger. DO NOT RESTATE: game rules, win conditions, or chat instructions.',
+  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max, speech/mannerisms, mood triggers, AND in-world personal boundaries in 1–2 cohesive paragraphs with NO sub-headers like **Core:** or **Boundaries:**). No duplicate adjectives. Banned: meta-chat/RP directives ("never narrates actions", "stays in character", formatting rules) or multi-stage progression rubrics — those belong ONLY in system_prompt. DO NOT RESTATE: physical appearance or setting.',
+  scenario: 'POV: 3rd-person immediate setting, relationship framing, and live scene stakes/tension in 1–2 clean paragraphs with NO sub-headers (**Setting:**, **Core mechanic:**, etc.). Do NOT dump multi-stage state rubrics or AI instruction lists here — put progression state tracking in system_prompt only. DO NOT RESTATE: appearance or full backstory.',
   first_mes: 'POV: in-character opening as {{char}} ("double-quoted dialogue" + *single-asterisk actions*), using {{char}} instead of a hardcoded name. STRICTLY NEVER narrate {{user}}\'s actions, arrival, gaze, knowledge, or choices (including via aliases like "the guest walks in" or collective subjects like "neither looks away"). Banned: multi-<START>, User: labels.',
   mes_example: 'POV: {{user}}:/{{char}}: uniform "double-quoted dialogue" on BOTH {{user}}: and {{char}}: lines + *single-asterisk actions* across 3 blocks: Baseline/Public -> Private/Core dynamic -> High stakes/Vulnerability. Use {{char}} in narration; keep timeline strictly consistent with description/scenario; never narrate {{user}} inside {{char}}: lines. Banned: three hellos.',
   system_prompt: 'POV: ALWAYS begin with {{original}} on its own line, then concise 2nd-person character continuity, voice/format ("dialogue" + *actions*), and named-state progression / boundary enforcement using {{char}} (never invisible numeric counts). DO NOT RESTATE: full appearance/backstory from description or full setting from scenario. Banned: mid-scene RP, hardcoded character name, unused formatting rules.',
   post_history_instructions: 'POV: ALWAYS begin with {{original}} on its own line, then 1–3 crisp sentences/bullets of ONLY the top 1–3 continuity hooks using {{char}}. DO NOT RESTATE: full bio or full rulebook.',
-  creator_notes: 'POV: 3rd-person human notes for other creators/users (usage tips, pacing notes, content warnings). If the card assumes a specific user role/gender/persona, include a plain-English "Intended user: ..." line. Banned: {{user}}/{{char}} macros, in-character speech, or any behavioral rule missing from personality/scenario/system_prompt.',
+  creator_notes: 'POV: 3rd-person human notes for other creators/users (usage tips, pacing notes, content warnings). If the card assumes a specific user role/gender/persona, include a plain-English "Intended user: ..." line. If based on a real person/public figure, include a brief fictional-portrayal disclaimer. Banned: {{user}}/{{char}} macros, internal "Content level N" jargon, in-character speech, or any behavioral rule missing from personality/scenario/system_prompt.',
   tags: 'Output 5–12 comma-separated lowercase deduplicated tags (use spaces, not hyphens, inside multi-word tags like "slow burn, female character"). Prefer searchable archetype/role/setting tags; avoid meta-mechanic labels ("tension mechanic") and generic filler ("drama", "ensemble").',
   name: 'Character display name only.',
   nickname: 'Short substitute name for {{char}} whenever name has multiple words, titles, or prefixes (e.g. "Andrea" for "Andrea Botez"); else empty.',
@@ -509,6 +509,37 @@ function replaceLiteralCharName(text: string, charName: string): string {
   out = out.replace(new RegExp(`\\b${esc}\\b`, 'gi'), '{{char}}');
   return out;
 }
+function balanceParagraphDelimiters(text: string, fieldName?: string): string {
+  if (!text) return text;
+  const rpFields = new Set(['first_mes', 'mes_example', 'alternate_greetings', 'group_only_greetings']);
+  if (fieldName && !rpFields.has(fieldName)) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === '<START>' || /^\s*[-*]\s+/.test(line)) return line;
+      let out = line;
+      const withoutBold = out.replace(/\*\*/g, '');
+      const starCount = (withoutBold.match(/\*/g) || []).length;
+      if (starCount % 2 === 1) {
+        const quoteIdx = out.indexOf('"');
+        const firstStarIdx = out.indexOf('*');
+        if (quoteIdx > firstStarIdx && firstStarIdx !== -1 && (out.slice(0, quoteIdx).match(/\*/g) || []).length % 2 === 1) {
+          const beforeQuote = out.slice(0, quoteIdx).trimEnd();
+          const rest = out.slice(quoteIdx);
+          out = `${beforeQuote}* ${rest}`;
+        } else {
+          out = `${out.trimEnd()}*`;
+        }
+      }
+      const quoteCount = (out.match(/"/g) || []).length;
+      if (quoteCount % 2 === 1) {
+        out = `${out.trimEnd()}"`;
+      }
+      return out;
+    })
+    .join('\n');
+}
 function sanitizeCreatorNotes(text: string, charName = ''): string {
   if (!text) return text;
   const name = charName.trim() || 'the character';
@@ -519,7 +550,26 @@ function sanitizeCreatorNotes(text: string, charName = ''): string {
   out = out.replace(/\{\{\s*char['’]?s\s*\}\}/gi, `${name}'s`);
   out = out.replace(/\{\{\s*char\s*\}\}['’]s/gi, `${name}'s`);
   out = out.replace(/\{\{\s*char\s*\}\}/gi, name);
+  out = out.replace(/\bcontent\s+level\s+[1-5]\s*(?:\([^)]*\))?\s*(?:is\s+)?(?:permitted|enabled|allowed|active)?/gi, 'Uncensored/mature themes');
   return out;
+}
+function stripFieldSubheaders(text: string, fieldName?: string): string {
+  if (!text) return text;
+  if (fieldName !== 'description' && fieldName !== 'personality' && fieldName !== 'scenario') {
+    return text;
+  }
+  const headerWord =
+    '(?:Identity|Appearance|Physical(?:\\s+Appearance)?|Background|Backstory|History|Core(?:\\s+Traits|\\s+Mechanic[^:\\n]*)?|Traits|Psychology|Temperament|Speech(?:\\s*[/&]\\s*Mannerisms)?|Mannerisms|Voice|Mood(?:\\s+Triggers|\\s+Shifts)?|Triggers|Boundaries|Limits|Hard\\s+Limits|Setting|Relationship(?:\\s+Framing)?|Current\\s+Situation|Situation|Stakes|Premise|Overview|Win\\s+Condition|Progression|Rules)';
+  let out = text;
+  out = out.replace(
+    new RegExp(`(^|\\n)[ \\t]*(?:#{1,4}[ \\t]*${headerWord}[ \\t]*:?|\\*\\*[ \\t]*${headerWord}[ \\t]*:?[ \\t]*\\*\\*[ \\t]*:?)[ \\t]*\\n+`, 'gi'),
+    '$1',
+  );
+  out = out.replace(
+    new RegExp(`(^|\\n\\s*)(?:\\*\\*\\s*${headerWord}\\s*:?\\s*\\*\\*\\s*:?\\s*|#{1,4}\\s*${headerWord}\\s*:?\\s+|${headerWord}\\s*:\\s+)`, 'gi'),
+    '$1',
+  );
+  return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 function sanitizeCardText(text: string, fieldName?: string, charName = ''): string {
   if (!text) return text;
@@ -540,8 +590,19 @@ function sanitizeCardText(text: string, fieldName?: string, charName = ''): stri
   out = out.replace(/\bthe user\b/gi, '{{user}}');
   out = out.replace(/(^|\n)\s*User\s*:/g, '$1{{user}}:');
   out = out.replace(/(^|\n)\s*Name\s*:/g, '$1{{char}}:');
+  if (fieldName === 'description' || fieldName === 'personality' || fieldName === 'scenario') {
+    out = stripFieldSubheaders(out, fieldName);
+  }
   if (fieldName === 'description' || fieldName === 'personality') {
     out = out.replace(/^(\s*)You are\b/i, '$1{{char}} is');
+  }
+  if (
+    fieldName === 'first_mes' ||
+    fieldName === 'mes_example' ||
+    fieldName === 'alternate_greetings' ||
+    fieldName === 'group_only_greetings'
+  ) {
+    out = balanceParagraphDelimiters(out, fieldName);
   }
   return out;
 }
@@ -1208,19 +1269,28 @@ async function runConsistencyPass(
 ): Promise<Record<string, string>> {
   const patches: Record<string, string> = {};
   const desc = typeof cardObj.description === 'string' ? cardObj.description.trim() : '';
+  const pers = typeof cardObj.personality === 'string' ? cardObj.personality.trim() : '';
   const scen = typeof cardObj.scenario === 'string' ? cardObj.scenario.trim() : '';
   const fmes = typeof cardObj.first_mes === 'string' ? cardObj.first_mes.trim() : '';
   const mex = typeof cardObj.mes_example === 'string' ? cardObj.mes_example.trim() : '';
-  if (!desc || (!scen && !fmes && !mex)) return patches;
-  const allowedFields = new Set(['description', 'scenario', 'first_mes', 'mes_example']);
+  const sys = typeof cardObj.system_prompt === 'string' ? cardObj.system_prompt.trim() : '';
+  if (!desc || (!scen && !fmes && !mex && !pers)) return patches;
+  const allowedFields = new Set(['description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt']);
   try {
-    const checkPrompt = `Audit these character card fields ONLY for concrete factual or timeline contradictions (e.g., conflicting timeframes like "eight months" vs "this morning", conflicting event order like "night before fight" vs "leaving for fight camp", or who-knows-what contradictions). Ignore purely stylistic differences.
+    const checkPrompt = `Audit these character card fields ONLY for concrete factual, timeline, or relationship-status contradictions:
+1. Conflicting time markers or durations (e.g., "eight months of circling" in description vs "met this morning" in scenario/mes_example, or "night before the fight" vs "leaving for fight camp").
+2. Conflicting prior relationship status or history (e.g., description says they already had a secret entanglement or hookup while personality/scenario says {{char}} turned {{user}} down and nothing has happened yet).
+3. Direct factual or role contradictions between description/personality/scenario and first_mes/mes_example/system_prompt.
+Ignore purely stylistic differences. Prefer patching downstream fields (mes_example, first_mes, scenario, personality, system_prompt) to match description unless description itself contains the obvious error.
 Return valid JSON ONLY:
-{"contradictions":[{"field":"mes_example"|"first_mes"|"scenario"|"description","issue":"concise contradiction","fix":"exact minimal fix preserving tone and format"}]}
+{"contradictions":[{"field":"mes_example"|"first_mes"|"scenario"|"personality"|"system_prompt"|"description","issue":"concise contradiction","fix":"exact minimal fix preserving tone and format"}]}
 If there are no concrete contradictions, return {"contradictions":[]}.
 
 description:
 ${desc}
+
+personality:
+${pers}
 
 scenario:
 ${scen}
@@ -1229,7 +1299,10 @@ first_mes:
 ${fmes}
 
 mes_example:
-${mex}`;
+${mex}
+
+system_prompt:
+${sys}`;
     const { content } = await runCascade({
       system: 'You are a strict continuity editor for SillyTavern character cards. Report ONLY concrete timeline or factual contradictions as valid JSON.',
       user: checkPrompt,
@@ -1265,6 +1338,7 @@ Fix ONLY these timeline/factual contradictions against the other card fields whi
 
 REFERENCE CONTEXT:
 description: ${desc}
+personality: ${pers}
 scenario: ${scen}
 
 DRAFT OF "${fieldKey}" TO FIX:
@@ -1439,7 +1513,7 @@ ${text}`;
             fixes.push(`Remove meta-chat/RP directive from personality (flagged: "${metaLeakHit}") — keep personality strictly in-world character psychology and boundaries; chat-model directives belong only in system_prompt/post_history_instructions.`);
           }
           if (overBudget && budget) {
-            fixes.push(`Condense from ${cleaned.length} chars to <= ${budget} chars while keeping every concrete fact, boundary, and required format (**Header:** / <START> / {{original}}).`);
+            fixes.push(`Condense from ${cleaned.length} chars to <= ${budget} chars while keeping every concrete fact, boundary, and required format (<START> / {{original}}).`);
           }
           try {
             const repairPrompt = `${basePrompt}\n\nQUALITY REPAIR PASS (fix ONLY the issues below on this draft and output ONLY the repaired "${fieldKey}" text):\n- ${fixes.join('\n- ')}\n\nDRAFT TO FIX:\n${cleaned}`;

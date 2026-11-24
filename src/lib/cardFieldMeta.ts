@@ -62,13 +62,13 @@ export const FIELD_DEPENDENCY_RANK: Record<keyof CardData, number> = {
 
 export const FIELD_HINTS: Partial<Record<keyof CardData, string>> = {
   name: "Character display name (short, memorable)",
-  description: "Appearance, background, abilities, and key traits (flattened Markdown with **Header:** blocks)",
-  personality: "Core personality traits, behavioral patterns, and quirks (~10 consolidated traits max)",
-  scenario: "The setting/situation where the user meets this character",
+  description: "Identity, physical appearance, and background in 2–3 clean paragraphs (no sub-headers)",
+  personality: "Core traits, speech/mannerisms, mood triggers, and personal boundaries in 1–2 clean paragraphs",
+  scenario: "Immediate setting, relationship framing, and live stakes in 1–2 clean paragraphs",
   first_mes: "The character's opening message with *actions* and dialogue",
   mes_example: "Three SillyTavern <START> blocks using {{user}}: / {{char}}: labels",
   creator_notes: "Notes for users about how to best use this character",
-  system_prompt: "Global role and baseline instructions for the AI on how to portray {{char}}",
+  system_prompt: "Global role, voice, and progression rules for the AI on how to portray {{char}}",
   post_history_instructions: "Brief anti-drift reminder inserted after chat history",
   tags: "5–12 lowercase comma-separated tags for categorization",
   nickname: "Short substitute name for {{char}} (when name includes titles or prefixes)",

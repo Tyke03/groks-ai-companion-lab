@@ -13,6 +13,8 @@ import {
   replaceLiteralCharName,
   sanitizeCardMacros,
   quoteUnquotedUserLines,
+  stripFieldSubheaders,
+  balanceParagraphDelimiters,
 } from "@/lib/cardAiFormat";
 
 describe("cardAiFormat", () => {
@@ -168,5 +170,27 @@ describe("cardAiFormat", () => {
     ).toBe(
       "<START>\n{{user}}: \"Walk me through it.\"\n{{char}}: *smiles* \"Sure.\"\n{{user}}: *nods* Already quoted",
     );
+    expect(
+      stripFieldSubheaders(
+        "**Identity:** Elara is a host.\n\n**Appearance:** Tall with dark hair.\n\n#Background\nShe grew up here.",
+        "description",
+      ),
+    ).toBe("Elara is a host.\n\nTall with dark hair.\n\nShe grew up here.");
+    expect(
+      sanitizeCardMacros(
+        "**Core:** Confident performer.\n\n**Speech/mannerisms:** Teasing voice.\n\n**Boundaries:** Never rushes.",
+        "personality",
+        "Elara",
+      ),
+    ).toBe("Confident performer.\n\nTeasing voice.\n\nNever rushes.");
+    expect(
+      balanceParagraphDelimiters(
+        "*{{char}} leans against the ropes \"Took you long enough.\"",
+        "first_mes",
+      ),
+    ).toBe("*{{char}} leans against the ropes* \"Took you long enough.\"");
+    expect(
+      sanitizeCardMacros("Content level 5 permitted for {{char}}.", "creator_notes", "Andrea"),
+    ).toBe("Uncensored/mature themes for Andrea.");
   });
 });

@@ -150,8 +150,8 @@ function sanitizeBrief(raw: unknown, fallbackLevel?: ContentLevel): CompanionBri
 }
 
 const recommendedMax: Record<string, number> = {
-  description: 1600, personality: 900, scenario: 800, first_mes: 1400, mes_example: 3200,
-  system_prompt: 1200, creator_notes: 700, tags: 250, post_history_instructions: 400,
+  description: 2200, personality: 1300, scenario: 1100, first_mes: 1800, mes_example: 3600,
+  system_prompt: 1600, creator_notes: 900, tags: 250, post_history_instructions: 550,
 };
 
 function CharCountIndicator({ current, max }: { current: number; max: number }) {

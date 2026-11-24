@@ -68,7 +68,7 @@ THREE-BLOCK PROGRESSION (required range — not three casual hellos):
 `;
 const FIELD_POV_CONTRACT = `FIELD POV CONTRACT (Correct vs Banned):
 description | Correct: 3rd-person authorial about {{char}} (identity, appearance, background ONLY). | Banned: "You are…", {{user}} diary, game rules/system directives.
-personality | Correct: {{char}}-centric traits, quirks, mood triggers, active behavioral boundaries. | Banned: "You are…", {{user}} traits, mid-scene RP, duplicate adjectives.
+personality | Correct: {{char}}-centric traits, quirks, mood triggers, active in-world behavioral boundaries. | Banned: "You are…", {{user}} traits, mid-scene RP, duplicate adjectives, meta-chat/RP directives ("never narrates actions", "stays in character").
 scenario | Correct: 3rd-person setting, framing, and core mechanics/win conditions. | Banned: {{user}} diary POV, dialogue scripts.
 first_mes | Correct: IC opening as {{char}} ("dialogue" + *actions*). | Banned: multi-<START>, User:/Name: labels, narrating {{user}}'s actions, OOC notes.
 mes_example | Correct: {{user}}:/{{char}}: with 3-block progression ("dialogue" + *actions*). | Banned: three hellos, User:/real-name labels, narrating {{user}} in {{char}}: lines.
@@ -113,7 +113,7 @@ UNIFORM FORMAT: Use "double quotes" for spoken dialogue and *single asterisks* f
 FIELDS, SINGLE OWNERS & HARD LENGTH BUDGETS (stay strictly under):
 - name: display name. Keep if provided. Budget <=40 chars.
 - description: identity, appearance, physicality, background/history ONLY. Structure as 2–4 flattened Markdown **Header:** blocks (e.g. **Identity:**, **Appearance:**, **Background:**). Strip JSON/W++/raw dumps, proofread grammar (a/an, capitalization). Do NOT put game rules, win conditions, or chat instructions here. Budget <=1600 chars.
-- personality: ~10 consolidated core traits, psychology, speech/mannerism quirks, mood-shift triggers, and active behavioral boundaries/limits (e.g. role/intimacy/agency limits so critical rules are never stranded in creator_notes). No duplicate or contradictory descriptors. Budget <=900 chars.
+- personality: ~10 consolidated core traits, psychology, speech/mannerism quirks, mood-shift triggers, and active in-world behavioral boundaries/limits (e.g. role/intimacy/agency limits so critical rules are never stranded in creator_notes). No duplicate/contradictory descriptors, and NEVER put meta-chat/RP rules (like "never narrates user actions" or "stays in character") here — those belong ONLY in system_prompt and post_history_instructions. Budget <=900 chars.
 - scenario: setting, relationship framing, and core scene mechanics / win conditions (if a contest/counter mechanic exists, include a tell-based or internal tally cue). Do NOT repeat appearance. Budget <=800 chars.
 - first_mes: {{char}} opening message ("dialogue" + *actions*). NEVER narrate {{user}}'s actions, speech, arrival, or choices; leave room for {{user}} to act. Budget <=1400 chars.
 - mes_example: EXACTLY three SillyTavern blocks (Baseline/Public mask -> Private/Core dynamic -> High stakes/Vulnerability — NOT three hellos):
@@ -181,7 +181,7 @@ const FIELD_CHAR_BUDGETS: Record<string, number> = {
 };
 const FIELD_POV_SNIPPETS: Record<string, string> = {
   description: 'POV: 3rd-person authorial about {{char}} in 2–4 flattened Markdown **Header:** blocks (Identity, Appearance, Background ONLY). Strip JSON/W++, proofread typos/a-an. DO NOT RESTATE: game rules, win conditions, or chat instructions.',
-  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max, mood-shift triggers, AND active behavioral/role/intimacy boundaries so nothing strands in creator_notes). No duplicate adjectives. DO NOT RESTATE: physical appearance or setting.',
+  personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max, mood-shift triggers, AND active in-world behavioral/role/intimacy boundaries so nothing strands in creator_notes). No duplicate adjectives. Banned: meta-chat/RP directives ("never narrates actions", "stays in character", formatting rules) — those belong ONLY in system_prompt/PHI. DO NOT RESTATE: physical appearance or setting.',
   scenario: 'POV: 3rd-person immediate setting, relationship framing, and core scene mechanics / win conditions (include a tell-based or internal tally cue if tracking counts). DO NOT RESTATE: appearance or full backstory.',
   first_mes: 'POV: in-character opening as {{char}} ("double-quoted dialogue" + *single-asterisk actions*). STRICTLY NEVER narrate {{user}}\'s actions, speech, arrival, or choices. Banned: multi-<START>, User: labels.',
   mes_example: 'POV: {{user}}:/{{char}}: uniform "double-quoted dialogue" + *single-asterisk actions* across 3 blocks: Baseline/Public -> Private/Core dynamic -> High stakes/Vulnerability. Never narrate {{user}} inside {{char}}: lines. Banned: three hellos.',
@@ -554,8 +554,9 @@ function findUserNarrationViolation(text: string, fieldKey: string): string | nu
         .join('\n')
     : text;
   const patterns = [
-    /\b(?:watching|sees?|watches?|as)\s+\{\{user\}\}\s+(?:light|lights|draw|draws|walk|walks|step|steps|enter|enters|open|opens|close|closes|reach|reaches|touch|touches|say|says|speak|speaks|nod|nods|sit|sits|stand|stands|grab|grabs|pull|pulls|push|pushes|turn|turns|drop|drops)\b[^.!?\n]*/i,
-    /\{\{user\}\}\s+(?:lights|walks|steps|enters|opens|reaches|nods|smiles|laughs|says|speaks|sits|stands|grabs|pulls|pushes|turns|drops|takes|puts|hands|places)\b[^.!?\n]*/i,
+    /\b(?:watching|sees?|watches?|as)\s+(?:\{\{user\}\}|him|her|them)\s+(?:come\s+in|walk\s+in|step\s+in|light|lights|draw|draws|walk|walks|step|steps|enter|enters|open|opens|close|closes|reach|reaches|touch|touches|say|says|speak|speaks|nod|nods|sit|sits|stand|stands|grab|grabs|pull|pulls|push|pushes|turn|turns|drop|drops)\b[^.!?\n]*/i,
+    /\{\{user\}\}\s+(?:comes\s+in|walks\s+in|steps\s+in|lights|walks|steps|enters|opens|reaches|nods|smiles|laughs|says|speaks|sits|stands|grabs|pulls|pushes|turns|drops|takes|puts|hands|places)\b[^.!?\n]*/i,
+    /\bas\s+(?:he|she|they)\s+(?:comes?\s+in|walks?\s+in|steps?\s+in|enters?|opens?|lights?|reaches?|sits?\s+down)\b[^.!?\n]*/i,
     /"[^"]*\bYou\s+(?:came\s+home|walked\s+in|stepped\s+in|just\s+walked|just\s+got\s+back)\b[^"]*"/i,
   ];
   for (const re of patterns) {
@@ -563,6 +564,11 @@ function findUserNarrationViolation(text: string, fieldKey: string): string | nu
     if (m) return m[0].trim().slice(0, 140);
   }
   return null;
+}
+function findPersonalityMetaLeak(text: string, fieldKey: string): string | null {
+  if (!text || fieldKey !== 'personality') return null;
+  const m = text.match(/\b(?:never\s+narrates?\s+(?:his|her|their|\{\{user\}\}'?s|the\s+user'?s)?\s*(?:actions|dialogue|speech)|stays?\s+in\s+character|never\s+breaks?\s+character|writes?\s+in\s+(?:italics|asterisks|double\s+quotes))\b[^.!?\n]*/i);
+  return m ? m[0].trim().slice(0, 140) : null;
 }
 function rewriteSpeakerLabels(text: string, charName: string): string {
   if (!text) return text;
@@ -1302,11 +1308,15 @@ ${text}`;
         let cleaned = cleanFieldText(rawContent, fieldKey, charName);
         let activeProvider = currentProvider;
         const narrationHit = findUserNarrationViolation(cleaned, fieldKey);
+        const metaLeakHit = findPersonalityMetaLeak(cleaned, fieldKey);
         const overBudget = typeof budget === 'number' && cleaned.length > Math.round(budget * 1.1);
-        if (narrationHit || overBudget) {
+        if (narrationHit || metaLeakHit || overBudget) {
           const fixes: string[] = [];
           if (narrationHit) {
             fixes.push(`Remove {{user}} action narration (flagged: "${narrationHit}") — describe ONLY {{char}} and the environment, leaving room for {{user}} to act.`);
+          }
+          if (metaLeakHit) {
+            fixes.push(`Remove meta-chat/RP directive from personality (flagged: "${metaLeakHit}") — keep personality strictly in-world character psychology and boundaries; chat-model directives belong only in system_prompt/post_history_instructions.`);
           }
           if (overBudget && budget) {
             fixes.push(`Condense from ${cleaned.length} chars to <= ${budget} chars while keeping every concrete fact, boundary, and required format (**Header:** / <START> / {{original}}).`);
@@ -1364,6 +1374,64 @@ ${text}`;
         : `\n\nGENERATE-ALL MODE: Return the complete card JSON. Client will apply every unlocked field.`;
       const { provider, card } = await callLLMForWholeCard(CARD_AUTHOR_SYSTEM, prompt, providers, CARD_JSON_MAX_TOKENS, temperature);
       const flatHubCard = sanitizeWholeCardFields(normalizeWholeCardToHub(card));
+      const charName = joinStringOrArray(flatHubCard.name).trim();
+      const repairTargets: Array<Promise<void>> = [];
+      const stringCheckFields = ['description', 'personality', 'scenario', 'first_mes', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes'];
+      for (const key of stringCheckFields) {
+        if (policies?.[key]?.locked === true) continue;
+        const val = typeof flatHubCard[key] === 'string' ? (flatHubCard[key] as string) : '';
+        if (!val.trim()) continue;
+        const budget = FIELD_CHAR_BUDGETS[key];
+        const narrationHit = findUserNarrationViolation(val, key);
+        const metaLeakHit = findPersonalityMetaLeak(val, key);
+        const overBudget = typeof budget === 'number' && val.length > Math.round(budget * 1.1);
+        if (!narrationHit && !metaLeakHit && !overBudget) continue;
+        const fixes: string[] = [];
+        if (narrationHit) fixes.push(`Remove {{user}} action narration (flagged: "${narrationHit}") — describe ONLY {{char}} and the environment.`);
+        if (metaLeakHit) fixes.push(`Remove meta-chat/RP directive from personality (flagged: "${metaLeakHit}") — keep personality strictly in-world.`);
+        if (overBudget && budget) fixes.push(`Condense from ${val.length} chars to <= ${budget} chars while keeping every concrete fact, boundary, and required format.`);
+        repairTargets.push((async () => {
+          try {
+            const repairPrompt = `QUALITY REPAIR PASS for "${key}" (${FIELD_POV_SNIPPETS[key] || ''}).\nFix ONLY these issues and output ONLY the repaired "${key}" text (no JSON, no fences):\n- ${fixes.join('\n- ')}\n\nDRAFT:\n${val}`;
+            const retry = await runCascade({
+              system: CARD_FIELD_REFINE_SYSTEM,
+              user: repairPrompt,
+              maxTokens: FIELD_MAX_TOKENS[key] ?? 700,
+              temperature: 0.55,
+              providers,
+            });
+            const repaired = cleanFieldText(retry.content, key, charName);
+            if (repaired.trim()) flatHubCard[key] = repaired;
+          } catch {
+            // Non-fatal: keep original field value
+          }
+        })());
+      }
+      for (const arrayKey of ['alternate_greetings', 'group_only_greetings']) {
+        if (policies?.[arrayKey]?.locked === true) continue;
+        const arr = Array.isArray(flatHubCard[arrayKey]) ? (flatHubCard[arrayKey] as string[]) : [];
+        arr.forEach((entry, idx) => {
+          const narrationHit = findUserNarrationViolation(entry, arrayKey);
+          if (!narrationHit) return;
+          repairTargets.push((async () => {
+            try {
+              const repairPrompt = `QUALITY REPAIR PASS for one opener in "${arrayKey}".\nRemove {{user}} action narration (flagged: "${narrationHit}") — describe ONLY {{char}} and the environment, keeping the exact same setting, dynamic, and uniform "double-quoted dialogue" + *single-asterisk actions*. Output ONLY the single repaired opener text:\n\nDRAFT:\n${entry}`;
+              const retry = await runCascade({
+                system: CARD_FIELD_REFINE_SYSTEM,
+                user: repairPrompt,
+                maxTokens: 600,
+                temperature: 0.55,
+                providers,
+              });
+              const repaired = cleanFieldText(retry.content, 'first_mes', charName);
+              if (repaired.trim()) arr[idx] = repaired;
+            } catch {
+              // Non-fatal
+            }
+          })());
+        });
+      }
+      if (repairTargets.length > 0) await Promise.all(repairTargets);
       return jsonResponse({ result: flatHubCard, provider, ...(useRefine ? { refined: true } : {}) });
     }
     /* --- CONVERT / IMPORT --- */

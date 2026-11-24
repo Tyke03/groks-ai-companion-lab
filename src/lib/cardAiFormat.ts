@@ -564,6 +564,25 @@ function joinStringOrArray(value: unknown, sep = ', '): string {
 }
 
 /**
+ * Wrap plain unquoted spoken dialogue on {{user}}: lines in mes_example with double quotes
+ * so both {{user}}: and {{char}}: match uniform novel-style formatting.
+ */
+export function quoteUnquotedUserLines(text: string): string {
+  if (!text) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      const m = line.match(/^(\s*\{\{user\}\}\s*:\s*)(.+)$/);
+      if (!m) return line;
+      const prefix = m[1];
+      const body = m[2].trim();
+      if (!body || body.includes('"') || body.includes('*')) return line;
+      return `${prefix}"${body}"`;
+    })
+    .join('\n');
+}
+
+/**
  * Normalize comma-separated tags into one uniform lowercase space-separated style,
  * deduplicated and capped at 12 tags.
  */
@@ -779,6 +798,8 @@ export function normalizeWholeCardToHub(
     value = sanitizeFieldText(value, key, charName);
     if (key === 'tags' && typeof value === 'string') {
       value = normalizeCardTags(value);
+    } else if (key === 'mes_example' && typeof value === 'string') {
+      value = quoteUnquotedUserLines(value);
     } else if ((key === 'system_prompt' || key === 'post_history_instructions') && typeof value === 'string' && value.trim()) {
       value = ensureOriginalMacro(replaceLiteralCharName(value, charName));
     }

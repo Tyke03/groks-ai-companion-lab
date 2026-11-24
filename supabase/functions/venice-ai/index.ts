@@ -41,7 +41,7 @@ UNIFORM DIALOGUE FORMAT
 SINGLE-OWNER FIELD BOUNDARIES (avoid token bloat & stranded rules)
 - description: identity, appearance, physicality, background/history ONLY (2–4 **Header:** Markdown blocks; proofread grammar/typos). NO game rules, win conditions, or chat directives.
 - personality: psychology, temperament, speech/mannerism quirks, mood-shift triggers, and active behavioral boundaries/limits (so critical role/intimacy rules are never stranded in creator_notes).
-- scenario: immediate setting, relationship framing, and core scene mechanics / win conditions (include a concrete tell-based or internal tally cue if a scene tracks counts).
+- scenario: immediate setting, relationship framing, and core scene mechanics / win conditions (NEVER use an invisible numeric counter/score — express escalating or contest mechanics as 3–5 NAMED OBSERVABLE STATES with physical/verbal tells).
 - first_mes: IC opener as {{char}} ("dialogue" + *actions*). NEVER narrate {{user}}'s actions, speech, arrival, or choices.
 - mes_example: {{user}}:/{{char}}: across Block1 Public -> Block2 Private -> Block3 High stakes. Banned: three hellos, narrating {{user}} inside {{char}}: lines.
 - system_prompt: 2nd-person continuity, voice/format, and rule enforcement FOR the chat model. Open with {{original}} on its own line; use {{char}} (not hardcoded name); do NOT repeat bio/appearance from description.
@@ -57,8 +57,9 @@ const MES_EXAMPLE_FORMAT_RULES = `Format mes_example EXACTLY like SillyTavern ex
 - Each block starts with <START> alone on its own line.
 - Immediately after <START>, use {{user}}: and {{char}}: speaker labels (never User:, never the character's real name as a label, never Name:).
 - Macros MUST be lowercase {{user}} / {{char}} only. Ban {{User}}, {{Char}}, {{User's}}; use {{user}}'s. Ban "The User". Ban User:/Name: labels.
-- Use UNIFORM novel-style formatting matching first_mes and greetings: "double quotes" for spoken dialogue and *single asterisks* for actions and inner thoughts. Never wrap an entire turn (including actions) inside one outer pair of quotes.
-- Never narrate {{user}}'s actions or dialogue inside {{char}}: lines.
+- Use UNIFORM novel-style formatting matching first_mes and greetings: put BOTH {{user}}: and {{char}}: spoken dialogue in "double quotes" and *single asterisks* for actions and inner thoughts. Never wrap an entire turn (including actions) inside one outer pair of quotes.
+- Use {{char}} in narration/examples rather than hardcoding the character's literal name (when nickname is set, {{char}} expands naturally).
+- Never narrate {{user}}'s actions, gaze, knowledge, or dialogue inside {{char}}: lines (including collective phrasing like "neither looks away" or "they both know").
 - Do NOT mash actions with semicolons or put the whole exchange on one line.
 - Prefer richer, longer examples that model high chat quality — UNLESS personality/description clearly indicates quiet/silent/not-a-talker.
 THREE-BLOCK PROGRESSION (required range — not three casual hellos):
@@ -112,24 +113,25 @@ Personality/description = {{char}} traits from an authorial/third-person (or {{c
 UNIFORM FORMAT: Use "double quotes" for spoken dialogue and *single asterisks* for actions/inner thoughts across first_mes, mes_example, alternate_greetings, group_only_greetings, and system_prompt Format line.
 FIELDS, SINGLE OWNERS & HARD LENGTH BUDGETS (stay strictly under):
 - name: display name. Keep if provided. Budget <=40 chars.
-- description: identity, appearance, physicality, background/history ONLY. Structure as 2–4 flattened Markdown **Header:** blocks (e.g. **Identity:**, **Appearance:**, **Background:**). Strip JSON/W++/raw dumps, proofread grammar (a/an, capitalization). Do NOT put game rules, win conditions, or chat instructions here. Budget <=1600 chars.
+- description: identity, appearance, physicality, background/history ONLY. Structure as 2–4 flattened Markdown **Header:** blocks (e.g. **Identity:**, **Appearance:**, **Background:**). Strip JSON/W++/raw dumps, proofread grammar (a/an, capitalization). Refer to the player's role as {{user}} (never describe {{user}} as an unnamed stranger). Do NOT put game rules, win conditions, or chat instructions here. Budget <=1600 chars.
 - personality: ~10 consolidated core traits, psychology, speech/mannerism quirks, mood-shift triggers, and active in-world behavioral boundaries/limits (e.g. role/intimacy/agency limits so critical rules are never stranded in creator_notes). No duplicate/contradictory descriptors, and NEVER put meta-chat/RP rules (like "never narrates user actions" or "stays in character") here — those belong ONLY in system_prompt and post_history_instructions. Budget <=900 chars.
-- scenario: setting, relationship framing, and core scene mechanics / win conditions (if a contest/counter mechanic exists, include a tell-based or internal tally cue). Do NOT repeat appearance. Budget <=800 chars.
-- first_mes: {{char}} opening message ("dialogue" + *actions*). NEVER narrate {{user}}'s actions, speech, arrival, or choices; leave room for {{user}} to act. Budget <=1400 chars.
+- scenario: setting, relationship framing, and core scene mechanics / win conditions. NEVER use an invisible numeric counter/score ("track a count internally") — instead express any escalating/contest mechanic as 3–5 NAMED OBSERVABLE STATES with physical/verbal tells (e.g. Easy -> Aware -> Charged -> Cracking). Do NOT repeat appearance. Budget <=800 chars.
+- first_mes: {{char}} opening message ("dialogue" + *actions*), using {{char}} instead of hardcoding the character's literal name. NEVER narrate {{user}}'s actions, arrival, gaze, knowledge, or choices — including by alias ("the guest walks in") or collective subjects ("neither looks away", "they both know"). Budget <=1400 chars.
 - mes_example: EXACTLY three SillyTavern blocks (Baseline/Public mask -> Private/Core dynamic -> High stakes/Vulnerability — NOT three hellos):
   * <START> alone on its own line
   * Next line begins {{user}}: or {{char}}: (never User:, never the real name)
-  * Uniform "double quotes" for spoken dialogue + *single asterisks* for actions/thoughts (never wrap whole turns in quotes)
-  * Never narrate {{user}}'s actions inside {{char}}: lines
+  * Uniform "double quotes" for spoken dialogue on BOTH {{user}}: and {{char}}: lines + *single asterisks* for actions/thoughts (never wrap whole turns in quotes)
+  * Use {{char}} in narration; NEVER narrate {{user}}'s actions/gaze/knowledge inside {{char}}: lines (no "neither looks away" / "they both know")
+  * Keep timeline and facts strictly consistent with description and scenario
   * Macros lowercase only; {{user}}'s not {{User's}}
   * Budget <=3200 chars total.
-- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line). Each MUST differ from first_mes AND from each other in at least TWO of: location/setting, relationship stage, or power dynamic (never a near-rephrase of first_mes). NEVER narrate {{user}}'s actions or prior choices ("you came home late", "watching {{user}} light..."). If an alternate changes the base setting/binding from scenario, add one short carryover sentence explaining how the core dynamic/rules still apply. Each <=800 chars.
-- group_only_greetings: JSON array of 1–3 group-chat openers acknowledging other characters (for single-field plain text, separate with <START> alone on its own line); never narrate {{user}}; or [].
-- system_prompt: ALWAYS open with {{original}} on its own line (preserves the user's chat preset), then concise 2nd-person character continuity, voice/format directives matching "dialogue" + *actions*, and rule enforcement tailored to {{char}}. Use {{char}} (never hardcode the character's name). Do NOT repeat appearance/history from description or full setting from scenario, and do NOT prescribe formatting styles unused in first_mes/mes_example. Budget <=1200 chars.
-- post_history_instructions: ALWAYS open with {{original}} on its own line, then 1–3 crisp sentences/bullets reminding the model of ONLY the top 1–3 continuity hooks (voice/POV, key boundary/mechanic, never narrate {{user}}). Use {{char}}. Budget <=400 chars.
-- creator_notes: 3rd-person English notes for other creators/users ONLY (usage tips, tone/pacing notes, content warnings). NEVER use {{user}} or {{char}} macros here (frontends do not expand them). NEVER introduce a behavioral rule here that is absent from personality/scenario/system_prompt. Budget <=700 chars.
-- tags: 5–12 comma-separated lowercase deduplicated tags (use spaces, not hyphens, inside multi-word tags, e.g. "slow burn, monster girl, binding circle"). Include defining archetype/trait/genre tags, deduplicate near-synonyms, drop obscure coinages. Budget <=250 chars.
-- nickname: short substitute name for {{char}} ONLY when name has titles/prefixes (e.g. "Seraphine" when name is "Unit_02_Seraphine"); else "".
+- alternate_greetings: JSON array of EXACTLY 3 distinct openers (for single-field plain text, output 3 openers separated by <START> alone on its own line), using {{char}}. Each MUST differ from first_mes AND from each other in at least TWO of: location/setting, relationship stage, or power dynamic (never a near-rephrase of first_mes). NEVER narrate {{user}}'s actions, unplayed joint turns ("two rounds in"), or collective awareness ("they both hear it"). If an alternate changes the base setting/binding from scenario, add one short carryover sentence explaining how the core dynamic/rules still apply. Each <=800 chars.
+- group_only_greetings: JSON array of 1–3 group-chat openers acknowledging other characters ("dialogue" + *actions*, using {{char}}), separated by <START> alone on its own line; never narrate {{user}}; or [].
+- system_prompt: ALWAYS open with {{original}} on its own line (preserves the user's chat preset), then concise 2nd-person character continuity, voice/format directives matching "dialogue" + *actions*, and rule enforcement tailored to {{char}}. Use {{char}} (never hardcode the character's name). Track progression via NAMED OBSERVABLE STATES and tells (never invisible numeric counts). Do NOT repeat appearance/history from description or full setting from scenario, and do NOT prescribe formatting styles unused in first_mes/mes_example. Budget <=1200 chars.
+- post_history_instructions: ALWAYS open with {{original}} on its own line, then 1–3 crisp sentences/bullets reminding the model of ONLY the top 1–3 continuity hooks (voice/POV, named-state progression/boundary, never narrate {{user}}). Use {{char}}. Budget <=400 chars.
+- creator_notes: 3rd-person English notes for other creators/users ONLY (usage tips, tone/pacing notes, content warnings). If the card assumes a specific user persona, role, or gender, include one plain-English line like "Intended user: male 13-0 MMA fighter." NEVER use {{user}} or {{char}} macros here (frontends do not expand them). NEVER introduce a behavioral rule here that is absent from personality/scenario/system_prompt. Budget <=700 chars.
+- tags: 5–12 comma-separated lowercase deduplicated tags (use spaces, not hyphens, inside multi-word tags, e.g. "slow burn, monster girl, female character"). Prefer searchable archetype, role, setting, and genre tags; avoid meta-mechanic labels ("tension mechanic") and generic filler ("drama", "ensemble"). Budget <=250 chars.
+- nickname: short substitute name for {{char}} whenever name has multiple words, titles, or prefixes (e.g. "Andrea" for "Andrea Botez", "Seraphine" for "Unit_02_Seraphine"); leave "" only for single-word names.
 - source: array of source URL strings if known; else [].
 - creator: creator handle if known; else "".
 - character_version: version string if useful; else "".
@@ -180,19 +182,19 @@ const FIELD_CHAR_BUDGETS: Record<string, number> = {
   tags: 250,
 };
 const FIELD_POV_SNIPPETS: Record<string, string> = {
-  description: 'POV: 3rd-person authorial about {{char}} in 2–4 flattened Markdown **Header:** blocks (Identity, Appearance, Background ONLY). Strip JSON/W++, proofread typos/a-an. DO NOT RESTATE: game rules, win conditions, or chat instructions.',
+  description: 'POV: 3rd-person authorial about {{char}} in 2–4 flattened Markdown **Header:** blocks (Identity, Appearance, Background ONLY). Strip JSON/W++, proofread typos/a-an. Refer to the player\'s role as {{user}} rather than an unnamed stranger. DO NOT RESTATE: game rules, win conditions, or chat instructions.',
   personality: 'POV: 3rd-person / {{char}}-centric (~10 consolidated traits max, mood-shift triggers, AND active in-world behavioral/role/intimacy boundaries so nothing strands in creator_notes). No duplicate adjectives. Banned: meta-chat/RP directives ("never narrates actions", "stays in character", formatting rules) — those belong ONLY in system_prompt/PHI. DO NOT RESTATE: physical appearance or setting.',
-  scenario: 'POV: 3rd-person immediate setting, relationship framing, and core scene mechanics / win conditions (include a tell-based or internal tally cue if tracking counts). DO NOT RESTATE: appearance or full backstory.',
-  first_mes: 'POV: in-character opening as {{char}} ("double-quoted dialogue" + *single-asterisk actions*). STRICTLY NEVER narrate {{user}}\'s actions, speech, arrival, or choices. Banned: multi-<START>, User: labels.',
-  mes_example: 'POV: {{user}}:/{{char}}: uniform "double-quoted dialogue" + *single-asterisk actions* across 3 blocks: Baseline/Public -> Private/Core dynamic -> High stakes/Vulnerability. Never narrate {{user}} inside {{char}}: lines. Banned: three hellos.',
-  system_prompt: 'POV: ALWAYS begin with {{original}} on its own line, then concise 2nd-person character continuity, voice/format ("dialogue" + *actions*), and rule/boundary enforcement using {{char}}. DO NOT RESTATE: full appearance/backstory from description or full setting from scenario. Banned: mid-scene RP, hardcoded character name, unused formatting rules.',
+  scenario: 'POV: 3rd-person immediate setting, relationship framing, and core scene mechanics / win conditions. NEVER use an invisible numeric counter/score — express progression as 3–5 NAMED OBSERVABLE STATES with physical/verbal tells. DO NOT RESTATE: appearance or full backstory.',
+  first_mes: 'POV: in-character opening as {{char}} ("double-quoted dialogue" + *single-asterisk actions*), using {{char}} instead of a hardcoded name. STRICTLY NEVER narrate {{user}}\'s actions, arrival, gaze, knowledge, or choices (including via aliases like "the guest walks in" or collective subjects like "neither looks away"). Banned: multi-<START>, User: labels.',
+  mes_example: 'POV: {{user}}:/{{char}}: uniform "double-quoted dialogue" on BOTH {{user}}: and {{char}}: lines + *single-asterisk actions* across 3 blocks: Baseline/Public -> Private/Core dynamic -> High stakes/Vulnerability. Use {{char}} in narration; keep timeline strictly consistent with description/scenario; never narrate {{user}} inside {{char}}: lines. Banned: three hellos.',
+  system_prompt: 'POV: ALWAYS begin with {{original}} on its own line, then concise 2nd-person character continuity, voice/format ("dialogue" + *actions*), and named-state progression / boundary enforcement using {{char}} (never invisible numeric counts). DO NOT RESTATE: full appearance/backstory from description or full setting from scenario. Banned: mid-scene RP, hardcoded character name, unused formatting rules.',
   post_history_instructions: 'POV: ALWAYS begin with {{original}} on its own line, then 1–3 crisp sentences/bullets of ONLY the top 1–3 continuity hooks using {{char}}. DO NOT RESTATE: full bio or full rulebook.',
-  creator_notes: 'POV: 3rd-person human notes for other creators/users (usage tips, pacing notes, content warnings). Banned: {{user}}/{{char}} macros, in-character speech, or any behavioral rule missing from personality/scenario/system_prompt.',
-  tags: 'Output 5–12 comma-separated lowercase deduplicated tags (use spaces, not hyphens, inside multi-word tags like "slow burn, monster girl"). Include defining traits/genre, dedupe near-synonyms.',
+  creator_notes: 'POV: 3rd-person human notes for other creators/users (usage tips, pacing notes, content warnings). If the card assumes a specific user role/gender/persona, include a plain-English "Intended user: ..." line. Banned: {{user}}/{{char}} macros, in-character speech, or any behavioral rule missing from personality/scenario/system_prompt.',
+  tags: 'Output 5–12 comma-separated lowercase deduplicated tags (use spaces, not hyphens, inside multi-word tags like "slow burn, female character"). Prefer searchable archetype/role/setting tags; avoid meta-mechanic labels ("tension mechanic") and generic filler ("drama", "ensemble").',
   name: 'Character display name only.',
-  nickname: 'Short substitute name for {{char}} substitution ONLY when name has titles/prefixes; else empty.',
-  alternate_greetings: 'Output EXACTLY 3 distinct full openers separated by <START> alone on its own line (no JSON, no array brackets), using "dialogue" + *actions*. Each MUST differ from first_mes AND each other in at least 2 of: location, relationship stage, or power dynamic. NEVER narrate {{user}}\'s actions or prior choices. If an alternate changes the scenario\'s binding/setting, include one short carryover sentence explaining how the core dynamic/rules still apply.',
-  group_only_greetings: 'Output 1–3 group-chat openers acknowledging other characters ("dialogue" + *actions*), separated by <START> alone on its own line (no JSON); never narrate {{user}}; or empty.',
+  nickname: 'Short substitute name for {{char}} whenever name has multiple words, titles, or prefixes (e.g. "Andrea" for "Andrea Botez"); else empty.',
+  alternate_greetings: 'Output EXACTLY 3 distinct full openers separated by <START> alone on its own line (no JSON, no array brackets), using {{char}} and "dialogue" + *actions*. Each MUST differ from first_mes AND each other in at least 2 of: location, relationship stage, or power dynamic. NEVER narrate {{user}}\'s actions, unplayed joint turns ("two rounds in"), or collective awareness ("they both hear it"). If an alternate changes the scenario\'s binding/setting, include one short carryover sentence explaining how the core dynamic/rules still apply.',
+  group_only_greetings: 'Output 1–3 group-chat openers acknowledging other characters ({{char}}, "dialogue" + *actions*), separated by <START> alone on its own line (no JSON); never narrate {{user}}; or empty.',
   source: 'Source URL strings if known.',
   creator: 'Creator handle if known.',
   character_version: 'Version string if useful.',
@@ -557,6 +559,8 @@ function findUserNarrationViolation(text: string, fieldKey: string): string | nu
     /\b(?:watching|sees?|watches?|as)\s+(?:\{\{user\}\}|him|her|them)\s+(?:come\s+in|walk\s+in|step\s+in|light|lights|draw|draws|walk|walks|step|steps|enter|enters|open|opens|close|closes|reach|reaches|touch|touches|say|says|speak|speaks|nod|nods|sit|sits|stand|stands|grab|grabs|pull|pulls|push|pushes|turn|turns|drop|drops)\b[^.!?\n]*/i,
     /\{\{user\}\}\s+(?:comes\s+in|walks\s+in|steps\s+in|lights|walks|steps|enters|opens|reaches|nods|smiles|laughs|says|speaks|sits|stands|grabs|pulls|pushes|turns|drops|takes|puts|hands|places)\b[^.!?\n]*/i,
     /\bas\s+(?:he|she|they)\s+(?:comes?\s+in|walks?\s+in|steps?\s+in|enters?|opens?|lights?|reaches?|sits?\s+down)\b[^.!?\n]*/i,
+    /\b(?:neither\s+(?:looks?|turns?|speaks?|moves?|blinks?|says?)|they\s+both\s+(?:know|hear|feel|see|freeze|laugh|stop|look)|the\s+two\s+of\s+them\s+(?:know|hear|feel|lock|stare|exchange)|both\s+of\s+them\s+(?:know|hear|feel))\b[^.!?\n]*/i,
+    /\bthe\s+(?:guest\s+of\s+honor|guest|fighter|summoner|newcomer|stranger|visitor|client|partner)\s+(?:walks?|steps?|comes?|enters?|opens?|sits?|stands?|nods?|reaches?|says?|speaks?|looks?)\b[^.!?\n]*/i,
     /"[^"]*\bYou\s+(?:came\s+home|walked\s+in|stepped\s+in|just\s+walked|just\s+got\s+back)\b[^"]*"/i,
   ];
   for (const re of patterns) {
@@ -564,6 +568,28 @@ function findUserNarrationViolation(text: string, fieldKey: string): string | nu
     if (m) return m[0].trim().slice(0, 140);
   }
   return null;
+}
+function quoteUnquotedUserLines(text: string): string {
+  if (!text) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      const m = line.match(/^(\s*\{\{user\}\}\s*:\s*)(.+)$/);
+      if (!m) return line;
+      const prefix = m[1];
+      const body = m[2].trim();
+      if (!body || body.includes('"') || body.includes('*')) return line;
+      return `${prefix}"${body}"`;
+    })
+    .join('\n');
+}
+function deriveDefaultNickname(fullName: string): string {
+  const parts = (fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return '';
+  const skip = new Set(['the', 'a', 'an', 'dr', 'dr.', 'mr', 'mr.', 'ms', 'ms.', 'mrs', 'mrs.', 'lady', 'lord', 'sir', 'captain', 'capt.', 'king', 'queen', 'princess', 'prince', 'professor', 'prof.', 'agent', 'officer', 'unit']);
+  const first = parts[0];
+  if (skip.has(first.toLowerCase()) || /^[0-9_-]+$/.test(first)) return '';
+  return /^[A-Z][a-zA-Z'’-]{1,}$/.test(first) ? first : '';
 }
 function findPersonalityMetaLeak(text: string, fieldKey: string): string | null {
   if (!text || fieldKey !== 'personality') return null;
@@ -630,10 +656,15 @@ function normalizeWholeCardToHub(card: Record<string, unknown> | null | undefine
     if (typeof value === 'string') value = sanitizeCardText(value, key, charName);
     else if (Array.isArray(value)) value = value.map((v) => (typeof v === 'string' ? sanitizeCardText(v, key, charName) : v));
     if (key === 'tags' && typeof value === 'string') value = normalizeCardTags(value);
+    else if (key === 'mes_example' && typeof value === 'string') value = quoteUnquotedUserLines(value);
     else if ((key === 'system_prompt' || key === 'post_history_instructions') && typeof value === 'string' && value.trim()) {
       value = ensureOriginalMacro(replaceLiteralCharName(value, charName));
     }
     result[key] = value;
+  }
+  if (!String(result.nickname ?? '').trim() && charName) {
+    const derived = deriveDefaultNickname(charName);
+    if (derived) result.nickname = derived;
   }
   return result;
 }
@@ -1163,10 +1194,99 @@ function cleanFieldText(raw: string, fieldName: string, charName = ''): string {
   }
   text = sanitizeCardText(text, fieldName, charName);
   if (fieldName === 'tags') return normalizeCardTags(text);
+  if (fieldName === 'mes_example') return quoteUnquotedUserLines(text);
   if ((fieldName === 'system_prompt' || fieldName === 'post_history_instructions') && text.trim()) {
     return ensureOriginalMacro(replaceLiteralCharName(text, charName));
   }
   return text;
+}
+async function runConsistencyPass(
+  cardObj: Record<string, unknown>,
+  policies: FieldPolicyMap,
+  providers: ResolvedProvider[],
+  charName: string,
+): Promise<Record<string, string>> {
+  const patches: Record<string, string> = {};
+  const desc = typeof cardObj.description === 'string' ? cardObj.description.trim() : '';
+  const scen = typeof cardObj.scenario === 'string' ? cardObj.scenario.trim() : '';
+  const fmes = typeof cardObj.first_mes === 'string' ? cardObj.first_mes.trim() : '';
+  const mex = typeof cardObj.mes_example === 'string' ? cardObj.mes_example.trim() : '';
+  if (!desc || (!scen && !fmes && !mex)) return patches;
+  const allowedFields = new Set(['description', 'scenario', 'first_mes', 'mes_example']);
+  try {
+    const checkPrompt = `Audit these character card fields ONLY for concrete factual or timeline contradictions (e.g., conflicting timeframes like "eight months" vs "this morning", conflicting event order like "night before fight" vs "leaving for fight camp", or who-knows-what contradictions). Ignore purely stylistic differences.
+Return valid JSON ONLY:
+{"contradictions":[{"field":"mes_example"|"first_mes"|"scenario"|"description","issue":"concise contradiction","fix":"exact minimal fix preserving tone and format"}]}
+If there are no concrete contradictions, return {"contradictions":[]}.
+
+description:
+${desc}
+
+scenario:
+${scen}
+
+first_mes:
+${fmes}
+
+mes_example:
+${mex}`;
+    const { content } = await runCascade({
+      system: 'You are a strict continuity editor for SillyTavern character cards. Report ONLY concrete timeline or factual contradictions as valid JSON.',
+      user: checkPrompt,
+      maxTokens: 600,
+      temperature: 0.2,
+      jsonMode: true,
+      providers,
+    });
+    const parsed = parseWholeCardJson(content).card;
+    const list = Array.isArray(parsed?.contradictions) ? parsed.contradictions : [];
+    const byField = new Map<string, string[]>();
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const rec = item as Record<string, unknown>;
+      const f = String(rec.field ?? '').trim();
+      const issue = String(rec.issue ?? '').trim();
+      const fix = String(rec.fix ?? '').trim();
+      if (!allowedFields.has(f) || !issue) continue;
+      if (policies?.[f]?.locked === true) continue;
+      const cur = byField.get(f) ?? [];
+      cur.push(fix ? `${issue} -> ${fix}` : issue);
+      byField.set(f, cur);
+    }
+    const targets = Array.from(byField.entries()).slice(0, 2);
+    await Promise.all(
+      targets.map(async ([fieldKey, issues]) => {
+        const draft = typeof cardObj[fieldKey] === 'string' ? (cardObj[fieldKey] as string) : '';
+        if (!draft.trim()) return;
+        try {
+          const repairPrompt = `CONTINUITY REPAIR PASS for "${fieldKey}" (${FIELD_POV_SNIPPETS[fieldKey] || ''}).
+Fix ONLY these timeline/factual contradictions against the other card fields while preserving voice, tone, and required format (output ONLY the repaired "${fieldKey}" text):
+- ${issues.join('\n- ')}
+
+REFERENCE CONTEXT:
+description: ${desc}
+scenario: ${scen}
+
+DRAFT OF "${fieldKey}" TO FIX:
+${draft}`;
+          const retry = await runCascade({
+            system: CARD_FIELD_REFINE_SYSTEM,
+            user: repairPrompt,
+            maxTokens: FIELD_MAX_TOKENS[fieldKey] ?? 900,
+            temperature: 0.45,
+            providers,
+          });
+          const repaired = cleanFieldText(retry.content, fieldKey, charName);
+          if (repaired.trim()) patches[fieldKey] = repaired;
+        } catch {
+          // Non-fatal
+        }
+      }),
+    );
+  } catch {
+    // Non-fatal: consistency check never blocks card delivery
+  }
+  return patches;
 }
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -1432,7 +1552,18 @@ ${text}`;
         });
       }
       if (repairTargets.length > 0) await Promise.all(repairTargets);
+      const consistencyPatches = await runConsistencyPass(flatHubCard, policies, providers, charName);
+      for (const [k, v] of Object.entries(consistencyPatches)) flatHubCard[k] = v;
       return jsonResponse({ result: flatHubCard, provider, ...(useRefine ? { refined: true } : {}) });
+    }
+    /* --- CONSISTENCY CHECK (cross-field timeline/fact check after staged generation) --- */
+    if (action === 'consistency-check') {
+      const { existingFields, fieldPolicies } = body;
+      const policies = (fieldPolicies && typeof fieldPolicies === 'object' ? fieldPolicies : undefined) as FieldPolicyMap;
+      const cardObj = existingFields && typeof existingFields === 'object' ? { ...(existingFields as Record<string, unknown>) } : {};
+      const charName = joinStringOrArray(cardObj.name).trim();
+      const patches = await runConsistencyPass(cardObj, policies, providers, charName);
+      return jsonResponse({ patches });
     }
     /* --- CONVERT / IMPORT --- */
     if (action === 'convert-character') {

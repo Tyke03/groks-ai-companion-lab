@@ -166,7 +166,7 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
 
     // Verify sanitization of mes_example & alternate_greetings
     expect((screen.getByLabelText(/Example Dialogue/i) as HTMLTextAreaElement).value).toBe(
-      "<START>\n{{user}}: Hello?\n{{char}}: *glances up* State your business with {{user}}.",
+      "<START>\n{{user}}: \"Hello?\"\n{{char}}: *glances up* State your business with {{user}}.",
     );
   });
 

@@ -7,6 +7,7 @@ import {
   normalizeAiMultiline,
   normalizeCardTags,
   parseAiStringList,
+  quoteUnquotedUserLines,
   replaceLiteralCharName,
   rewriteSpeakerLabels,
   sanitizeCardData,
@@ -203,10 +204,11 @@ export function applyFieldResult(card: CardData, fieldName: keyof CardData, raw:
       ),
     );
   } else if (fieldName === "mes_example" || fieldName === "first_mes") {
-    (next[fieldName] as string) = sanitizeCardMacros(
+    const cleaned = sanitizeCardMacros(
       rewriteSpeakerLabels(normalizeAiMultiline(String(value ?? "")), charName),
       String(fieldName),
     );
+    (next[fieldName] as string) = fieldName === "mes_example" ? quoteUnquotedUserLines(cleaned) : cleaned;
   } else if (fieldName === "tags") {
     (next.tags as string) = normalizeCardTags(
       typeof value === "string" ? value : value == null ? "" : String(value),
@@ -367,6 +369,46 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
       if (gapMs > 0) await new Promise((r) => setTimeout(r, gapMs)); // courtesy gap vs per-minute limits
     }
   }
+
+  // Non-fatal cross-field timeline/fact consistency check after full staged runs
+  const isTestMode =
+    typeof import.meta !== "undefined" &&
+    (import.meta as { env?: { MODE?: string } }).env?.MODE === "test";
+  if (
+    !isTestMode &&
+    !only &&
+    !opts.control?.aborted &&
+    hasFieldText(working.description) &&
+    (hasFieldText(working.mes_example) || hasFieldText(working.first_mes))
+  ) {
+    try {
+      const { data } = await supabase.functions.invoke("venice-ai", {
+        body: withAiProvider({
+          action: "consistency-check",
+          existingFields: {
+            name: working.name,
+            description: working.description,
+            scenario: working.scenario,
+            first_mes: working.first_mes,
+            mes_example: working.mes_example,
+          },
+          fieldPolicies: effectivePolicies,
+        }),
+      });
+      const patches = data?.patches;
+      if (patches && typeof patches === "object") {
+        for (const [key, val] of Object.entries(patches as Record<string, unknown>)) {
+          if (typeof val !== "string" || !val.trim()) continue;
+          const k = key as keyof CardData;
+          if (effectivePolicies[k]?.locked) continue;
+          working = applyFieldResult(working, k, val);
+        }
+      }
+    } catch {
+      // Non-fatal: keep staged results intact if consistency check fails
+    }
+  }
+
   return { card: working, outcomes, aborted: false };
 }
 

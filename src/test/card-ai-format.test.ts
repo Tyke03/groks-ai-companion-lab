@@ -12,6 +12,7 @@ import {
   ensureOriginalMacro,
   replaceLiteralCharName,
   sanitizeCardMacros,
+  quoteUnquotedUserLines,
 } from "@/lib/cardAiFormat";
 
 describe("cardAiFormat", () => {
@@ -159,6 +160,13 @@ describe("cardAiFormat", () => {
     );
     expect(sanitizeCardMacros("Notes for the user only.", "creator_notes", "Lila")).toBe(
       "Notes for the user only.",
+    );
+    expect(
+      quoteUnquotedUserLines(
+        "<START>\n{{user}}: Walk me through it.\n{{char}}: *smiles* \"Sure.\"\n{{user}}: *nods* Already quoted",
+      ),
+    ).toBe(
+      "<START>\n{{user}}: \"Walk me through it.\"\n{{char}}: *smiles* \"Sure.\"\n{{user}}: *nods* Already quoted",
     );
   });
 });

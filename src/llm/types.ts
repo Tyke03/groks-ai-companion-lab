@@ -19,6 +19,8 @@ export interface LlmRequest {
   seed: number;
   promptCacheKey: string;
   attempt: number;
+  /** True after this card has already paid fresh rates for the frozen system prompt. */
+  systemCacheHit?: boolean;
 }
 
 export interface LlmResponse {

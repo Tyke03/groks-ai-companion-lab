@@ -1,3 +1,4 @@
+import { countTokens } from "../context/budgets";
 import type { Card, FieldName } from "../domain/card";
 import { fieldText } from "../domain/card";
 import { FIELD_REGISTRY } from "../domain/fields";
@@ -9,6 +10,8 @@ import { validateMarkdown } from "./markdown";
 import { validateStageRubric } from "./stageRubric";
 import type { Finding, GateResult } from "./types";
 import { gate } from "./types";
+
+const SEMVERISH = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 function mesExampleOk(text: string): string | null {
   const starts = text.match(/<START>/g)?.length ?? 0;
@@ -23,10 +26,28 @@ export function validateWrittenField(card: Card, field: FieldName, tokens: numbe
   const state = card.fields[field];
   const text = fieldText(state.value);
   const findings: Finding[] = [];
+  const budget = FIELD_REGISTRY[field].budgetTokens;
   findings.push(...validateMarkdown(field, text).findings);
-  findings.push(...validateBudget(field, tokens, FIELD_REGISTRY[field].budgetTokens).findings);
+  if (FIELD_REGISTRY[field].format === "array" && Array.isArray(state.value)) {
+    for (const item of state.value) {
+      findings.push(...validateBudget(field, countTokens(item), budget).findings);
+    }
+  } else {
+    findings.push(...validateBudget(field, tokens, budget).findings);
+  }
   findings.push(...validateAgency(field, text).findings);
   findings.push(...validateStageRubric(field, text).findings);
+  if (field === "description") {
+    findings.push(...validateJargon(field, text, true).findings);
+  }
+  if (FIELD_REGISTRY[field].lint.includes("semver-ish") && text.trim() && !SEMVERISH.test(text.trim())) {
+    findings.push({
+      validator: "semver",
+      field,
+      blocking: true,
+      message: "character_version is not semver-ish",
+    });
+  }
   if (field === "creator_notes") {
     findings.push(...validateJargon(field, text, true).findings);
     if (!text.includes("Intended user:")) {

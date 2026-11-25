@@ -1,9 +1,9 @@
 import { PIPELINE_CONFIG } from "../config/pipeline";
 
-/** Cached system prefix at $0.033/M, fresh input at $0.15/M, output at $0.60/M. */
+/** Cached system prefix at $0.033/M after the first call. Fresh input $0.165/M, output $0.55/M. */
 export function priceUSD(inputTokens: number, outputTokens: number, cachedTokens = 0): number {
   const fresh = Math.max(0, inputTokens - cachedTokens);
-  return (cachedTokens * 0.033 + fresh * 0.15 + outputTokens * 0.6) / 1_000_000;
+  return (cachedTokens * 0.033 + fresh * 0.165 + outputTokens * 0.55) / 1_000_000;
 }
 
 export class CostGuard {

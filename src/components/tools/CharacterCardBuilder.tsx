@@ -310,6 +310,7 @@ export const CharacterCardBuilder = () => {
   const [importedFormat, setImportedFormat] = useState<CardFormat | null>(() => activeSlot.importedFormat);
   const [importWarnings, setImportWarnings] = useState<string[]>(() => activeSlot.importWarnings);
   const [specVersion, setSpecVersion] = useState<SpecVersion>(() => activeSlot.specVersion);
+  const [groupCard, setGroupCard] = useState(false);
   const [lossyExportKind, setLossyExportKind] = useState<"copy" | "json" | "png" | null>(null);
   const [pendingSpecV2, setPendingSpecV2] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -681,6 +682,7 @@ export const CharacterCardBuilder = () => {
     setImportWarnings(slot.importWarnings);
     setBrief(sanitizeBrief(slot.brief, slot.contentLevel));
     setFieldPolicies(slot.fieldPolicies ?? defaultPoliciesForBlankCard());
+    setGroupCard(false);
     setFieldProvider({});
     setRunProviders([]);
     setRunUsedFallback(false);
@@ -809,6 +811,7 @@ export const CharacterCardBuilder = () => {
         card: sanitizeCardData(card),
         brief: briefFromState(),
         specVersion,
+        groupCard: specVersion === "v3" && groupCard,
         fieldPolicies,
         runMode,
         protectExisting: !notes,
@@ -1042,6 +1045,7 @@ export const CharacterCardBuilder = () => {
     setImportedFormat(null);
     setImportWarnings([]);
     setFieldPolicies(defaultPoliciesForBlankCard());
+    setGroupCard(false);
     setPngFile(null);
     setFieldProvider({});
     setRunProviders([]);
@@ -1283,6 +1287,16 @@ export const CharacterCardBuilder = () => {
               ? "chara_card_v2 — stable. This editor still holds V3-only fields that V2 export will omit (confirm required)."
               : "chara_card_v2 — stable, widely supported"}
         </span>
+        {specVersion === "v3" && (
+          <label className="ml-auto flex items-center gap-2 text-sm">
+            <Switch
+              checked={groupCard}
+              onCheckedChange={setGroupCard}
+              aria-label="Group card"
+            />
+            Group card
+          </label>
+        )}
       </div>
 
       {/* Imported format badge + preservation / export notices */}

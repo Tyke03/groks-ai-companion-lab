@@ -1,4 +1,5 @@
 import base from "./system/base.md?raw";
+import fieldContract from "./system/field-contract.md?raw";
 import extract from "./stages/extract.md?raw";
 import plan from "./stages/plan.md?raw";
 import name from "./stages/name.md?raw";
@@ -18,6 +19,7 @@ import audit from "./stages/audit.md?raw";
 import repair from "./stages/repair.md?raw";
 
 export const SYSTEM_PROMPT = base.trim();
+export const FIELD_CONTRACT_TEMPLATE = fieldContract.trim();
 
 export const STAGE_PROMPTS: Record<string, string> = {
   extract: extract.trim(),

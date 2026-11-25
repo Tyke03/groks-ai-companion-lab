@@ -255,6 +255,8 @@ export interface RunOptions {
   protectExisting?: boolean;
   /** Multi-turn staged conversation (frozen server-side primer + append-only history). */
   conversation?: StageConversation;
+  /** User opt-in. A V3 card is not a group card unless this is set. */
+  groupCard?: boolean;
   onFieldStart?: (field: keyof CardData, stageId: string) => void;
   onFieldDone?: (o: FieldOutcome) => void;
   control?: { aborted: boolean };
@@ -391,7 +393,7 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
 
   if (opts.conversation) {
     const authoring = cardFromBuilder(working, effectivePolicies, {
-      groupCard: opts.specVersion === "v3",
+      groupCard: opts.groupCard === true,
     });
     const generated = await generateCard(authoring, {
       llm: createSupabaseLlm(),

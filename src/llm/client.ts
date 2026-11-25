@@ -22,6 +22,7 @@ export function buildRequest(opts: {
   user: string;
   cardId: string;
   attempt: number;
+  systemCacheHit?: boolean;
 }): LlmRequest {
   const schemaName = opts.route.schema as SchemaName | undefined;
   return {
@@ -43,6 +44,7 @@ export function buildRequest(opts: {
     seed: stageSeed(opts.cardId, opts.field ?? opts.stage, opts.attempt),
     promptCacheKey: PIPELINE_CONFIG.cacheKey,
     attempt: opts.attempt,
+    systemCacheHit: opts.systemCacheHit === true,
   };
 }
 
@@ -50,7 +52,8 @@ export function buildRequest(opts: {
 export function withMeasuredCost(req: LlmRequest, res: LlmResponse): LlmResponse {
   const inputTokens = req.messages.reduce((n, m) => n + countTokens(m.content), 0);
   const outputTokens = countTokens(res.content);
-  const cachedTokens = countTokens(SYSTEM_PROMPT);
+  const systemTokens = countTokens(req.messages[0]?.role === "system" ? req.messages[0].content : "");
+  const cachedTokens = req.systemCacheHit ? systemTokens : 0;
   return {
     ...res,
     inputTokens,

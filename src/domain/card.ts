@@ -65,10 +65,17 @@ export interface CardData {
   character_book?: CharacterBook;
 }
 
+export interface PlanRecord {
+  ownership: Record<string, string>;
+  contradictions: { a: string; b: string; kind?: string; quoteA: string; quoteB: string; fix?: string }[];
+  directives: string[];
+}
+
 export interface CardMeta {
   groupCard: boolean;
   realPerson: boolean;
   sourceFormat?: "v1" | "v2" | "wpp" | "raw";
+  plan?: PlanRecord;
 }
 
 export interface Card {

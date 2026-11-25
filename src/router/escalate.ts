@@ -14,6 +14,6 @@ export function escalatedRoute(route: StageRoute): StageRoute | null {
     ...route,
     model: ESCALATION_MODEL,
     temperature: ESCALATION_TEMPERATURE,
-    reasoningEffort: "none",
+    reasoningEffort: "high",
   };
 }

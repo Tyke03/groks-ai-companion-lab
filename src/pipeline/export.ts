@@ -5,6 +5,7 @@ import { validateBleed } from "../validators/bleed";
 import { validateWrittenField } from "../validators/fieldGate";
 import { validateGroupGate } from "../validators/groupGate";
 import { validateRealPerson } from "../validators/realPerson";
+import { validateSchema } from "../validators/schema";
 import type { Finding } from "../validators/types";
 import { emit } from "../telemetry/events";
 
@@ -38,10 +39,6 @@ export function exportCard(
   for (const gate of [validateBleed(card), validateRealPerson(card), validateGroupGate(card)]) {
     if (!gate.pass) reasons.push(...gate.findings.map(reason));
   }
-  if (reasons.length) {
-    emit("export.blocked", { count: reasons.length, field: reasons[0].field, validator: reasons[0].validator });
-    return { blocked: true, reasons };
-  }
 
   const now = Date.now();
   const data = { ...card.data };
@@ -62,6 +59,18 @@ export function exportCard(
       gatesPassed: true,
     },
   };
+  if (!String(data.name || "").trim()) {
+    reasons.push({ field: "name", validator: "schema", message: "name is required" });
+  }
+  const envelope = { spec: SPEC, spec_version: SPEC_VERSION, data };
+  const schemaGate = validateSchema("card", envelope);
+  if (!schemaGate.pass) {
+    reasons.push(...schemaGate.findings.map((finding) => ({ field: "card", validator: "schema", message: finding.message })));
+  }
+  if (reasons.length) {
+    emit("export.blocked", { count: reasons.length, field: reasons[0].field, validator: reasons[0].validator });
+    return { blocked: true, reasons };
+  }
   card.data = data;
   emit("export.ok", { cost: opts.costUSD ?? 0 });
   return {

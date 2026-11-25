@@ -30,7 +30,7 @@ export const FIELD_REGISTRY: Record<FieldName, FieldDef> = {
     name: "name",
     budgetTokens: 60,
     format: "text",
-    defaultPolicy: { locked: true, useAsContext: false, origin: "manual" },
+    defaultPolicy: unlocked,
     derived: false,
     lint: [],
     contract: {
@@ -44,7 +44,7 @@ export const FIELD_REGISTRY: Record<FieldName, FieldDef> = {
     name: "nickname",
     budgetTokens: 40,
     format: "text",
-    defaultPolicy: derivedLocked,
+    defaultPolicy: unlocked,
     derived: true,
     lint: [],
     contract: {
@@ -60,7 +60,7 @@ export const FIELD_REGISTRY: Record<FieldName, FieldDef> = {
     maxItems: 12,
     maxItemChars: 40,
     format: "array",
-    defaultPolicy: derivedLocked,
+    defaultPolicy: unlocked,
     derived: true,
     lint: ["tag schema"],
     contract: {

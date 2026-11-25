@@ -1,6 +1,7 @@
 import type { Card, FieldName } from "../domain/card";
-import { fieldText, isEmptyValue } from "../domain/card";
+import { isEmptyValue } from "../domain/card";
 import { FIELD_REGISTRY, STAGE_INDEX, STAGE_ORDER } from "../domain/fields";
+import { FIELD_CONTRACT_TEMPLATE } from "../prompts/load";
 import { countTokens, truncateToBudget } from "./budgets";
 import { renderFieldBody } from "./format";
 
@@ -25,18 +26,26 @@ function renderTier(title: string, names: FieldName[], card: Card): string {
   return lines.join("\n");
 }
 
-export function contractBlock(target: FieldName, extra = ""): string {
+function fillContract(target: FieldName): string {
   const def = FIELD_REGISTRY[target];
-  const lines = [
-    "<<FIELD_CONTRACT>>",
-    `TARGET: ${target}`,
-    `OWNS: ${def.contract.owns}.`,
-    `MUST NOT CONTAIN: ${def.contract.mustNot}.`,
-    `OWNED ELSEWHERE: ${def.contract.elsewhere}.`,
-    `BUDGET: ${def.budgetTokens} tokens hard.`,
-    `FORMAT: ${def.contract.format}`,
-    "Write fresh. Do not paraphrase any prior draft.",
-  ];
+  const values: Record<string, string> = {
+    field: target,
+    owns: `${def.contract.owns}.`,
+    mustNot: `${def.contract.mustNot}.`,
+    elsewhere: `${def.contract.elsewhere}.`,
+    budget: String(def.budgetTokens),
+    format: def.contract.format,
+  };
+  return FIELD_CONTRACT_TEMPLATE.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? "");
+}
+
+export function contractBlock(target: FieldName, extra = "", ownership: Record<string, string> = {}): string {
+  const lines = ["<<FIELD_CONTRACT>>", fillContract(target)];
+  const owned = Object.entries(ownership).filter(([, fact]) => fact.trim());
+  if (owned.length) {
+    lines.push("OWNERSHIP:");
+    for (const [name, fact] of owned) lines.push(`- ${name}: ${fact}`);
+  }
   if (extra.trim()) lines.push(extra.trim());
   lines.push("<<END_FIELD_CONTRACT>>");
   return lines.join("\n");
@@ -47,7 +56,12 @@ export function contractBlock(target: FieldName, extra = ""): string {
  * Locked + context = Tier A, any stage index. Unlocked + context = Tier B only
  * when that field's stage is earlier than the target.
  */
-export function buildContext(target: FieldName, card: Card, extraContract = ""): string {
+export function buildContext(
+  target: FieldName,
+  card: Card,
+  extraContract = "",
+  ownership: Record<string, string> = {},
+): string {
   const idx = STAGE_INDEX[target];
   const tierA: FieldName[] = [];
   const tierB: FieldName[] = [];
@@ -69,7 +83,7 @@ export function buildContext(target: FieldName, card: Card, extraContract = ""):
   if (needsGuard) parts.push(INJECTION_GUARD);
   parts.push(`<<TIER_A>>\n${renderTier("## AUTHORITATIVE — obey exactly", tierA, card)}\n<<END_TIER_A>>`);
   parts.push(`<<TIER_B>>\n${renderTier("## RAW SEED — extract facts, discard wording and structure", tierB, card)}\n<<END_TIER_B>>`);
-  parts.push(contractBlock(target, extraContract));
+  parts.push(contractBlock(target, extraContract, ownership));
   return parts.join("\n\n");
 }
 

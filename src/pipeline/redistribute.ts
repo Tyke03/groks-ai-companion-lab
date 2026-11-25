@@ -10,6 +10,7 @@ export interface ExtractCandidate {
 }
 
 const SPLIT_FIELDS: FieldName[] = [
+  "name",
   "description",
   "personality",
   "scenario",

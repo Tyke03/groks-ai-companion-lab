@@ -1,8 +1,8 @@
 import { PIPELINE_CONFIG } from "../config/pipeline";
 import { buildContext } from "../context/assembler";
-import { countTokens } from "../context/budgets";
-import type { Card, FieldName } from "../domain/card";
-import { fieldText } from "../domain/card";
+import { countTokens, truncateToBudget } from "../context/budgets";
+import { parseItems, renderFieldBody } from "../context/format";
+import type { Card, FieldName, PlanRecord } from "../domain/card";
 import { FIELD_REGISTRY } from "../domain/fields";
 import { writeField } from "../domain/create";
 import { buildRequest, complete } from "../llm/client";
@@ -28,27 +28,30 @@ export interface WriteEnv {
   cardId: string;
   brief?: string;
   directives: string[];
+  ownership: Record<string, string>;
+  contradictions: PlanRecord["contradictions"];
   cost: CostGuard;
   escalations: EscalationBudget;
   control?: { aborted: boolean };
+  /** False until this card has paid for the system prompt once. */
+  systemCacheHit: boolean;
 }
 
-function userTurn(card: Card, field: FieldName, note = ""): string {
-  const extra = [STAGE_PROMPTS[field] ?? "", ...envDirectives(note)].filter(Boolean).join("\n");
-  const parts = [buildContext(field, card, extra)];
-  return parts.join("\n\n");
+function userTurn(card: Card, field: FieldName, note: string, ownership: Record<string, string>): string {
+  const extra = [STAGE_PROMPTS[field] ?? "", note].filter(Boolean).join("\n");
+  return buildContext(field, card, extra, ownership);
 }
 
-function envDirectives(note: string): string[] {
-  return note ? [note] : [];
-}
-
-function withBrief(text: string, brief?: string, directives: string[] = []): string {
+function withBrief(text: string, env: WriteEnv): string {
   const parts = [text];
-  if (directives.length) {
-    parts.push(`<<PLAN>>\n${directives.map((d) => `- ${d}`).join("\n")}\n<<END_PLAN>>`);
-  }
-  if (brief?.trim()) parts.push(`<<BRIEF>>\n${brief.trim()}\n<<END_BRIEF>>`);
+  const lines = [
+    ...env.directives.map((d) => `- ${d}`),
+    ...env.contradictions.map(
+      (item) => `- contradiction ${item.a} vs ${item.b} (${item.kind ?? "conflict"}): "${item.quoteA}" / "${item.quoteB}"`,
+    ),
+  ];
+  if (lines.length) parts.push(`<<PLAN>>\n${lines.join("\n")}\n<<END_PLAN>>`);
+  if (env.brief?.trim()) parts.push(`<<BRIEF>>\n${env.brief.trim()}\n<<END_BRIEF>>`);
   return parts.join("\n\n");
 }
 
@@ -71,9 +74,19 @@ function applyParsed(field: FieldName, content: string): string | string[] {
 
 function remember(card: Card, field: FieldName, value: string | string[]): number {
   writeField(card, field, value, { origin: "generated" });
-  const tokens = countTokens(fieldText(value));
+  const tokens = countTokens(renderFieldBody(value));
   card.fields[field].tokens = tokens;
   return tokens;
+}
+
+function applyTruncation(card: Card, field: FieldName): void {
+  const budget = FIELD_REGISTRY[field].budgetTokens;
+  const value = card.fields[field].value;
+  if (Array.isArray(value)) {
+    remember(card, field, value.map((item) => truncateToBudget(item, budget)));
+    return;
+  }
+  remember(card, field, truncateToBudget(value, budget));
 }
 
 async function callStage(
@@ -88,8 +101,17 @@ async function callStage(
   if (env.cost.exhausted) return "cost";
   const started = Date.now();
   emit("stage.start", { stage, field: field ?? stage });
-  const req = buildRequest({ route, stage, field, user, cardId: env.cardId, attempt });
+  const req = buildRequest({
+    route,
+    stage,
+    field,
+    user,
+    cardId: env.cardId,
+    attempt,
+    systemCacheHit: env.systemCacheHit,
+  });
   const res = await complete(env.llm, req);
+  env.systemCacheHit = true;
   const crossed = env.cost.add(res.costUSD);
   emit("stage.done", {
     stage,
@@ -123,10 +145,7 @@ export async function generateField(card: Card, field: FieldName, env: WriteEnv)
   let lastFindings: Finding[] = [];
 
   const runOnce = async (): Promise<{ status: FieldWriteResult["status"]; provider?: string; findings: Finding[] }> => {
-    const user = withBrief(userTurn(card, field, note), env.brief, env.directives);
-    if (user.includes(`### ${field}\n`) && new RegExp(`^### ${field}$`, "m").test(user.split("<<FIELD_CONTRACT>>")[0] || "")) {
-      /* target may appear only inside the contract label, never as a tier heading before the contract */
-    }
+    const user = withBrief(userTurn(card, field, note, env.ownership), env);
     const called = await callStage(env, route, field, field, user, attempt);
     attempt += 1;
     if (called === "aborted") return { status: "skipped", findings: [] };
@@ -189,6 +208,13 @@ export async function generateField(card: Card, field: FieldName, env: WriteEnv)
     }
   }
 
+  if (lastFindings.some((finding) => finding.blocking && finding.validator === "budget")) {
+    applyTruncation(card, field);
+    const gate = validateWrittenField(card, field, card.fields[field].tokens);
+    if (gate.pass) return { status: "filled", provider: outcome.provider, findings: [] };
+    lastFindings = gate.findings;
+  }
+
   return { status: "blocked", provider: outcome.provider, findings: lastFindings };
 }
 
@@ -201,15 +227,18 @@ export async function repairField(
 ): Promise<boolean | "cost" | "aborted"> {
   if (!finding) return false;
   emit("repair.attempt", { field, validator: finding.validator });
-  const body = fieldText(card.fields[field].value);
+  const body = renderFieldBody(card.fields[field].value);
   const user = [
     STAGE_PROMPTS.repair,
     `FIELD: ${field}`,
     "BODY:",
     body,
     `FINDING: ${finding.message}`,
+    FIELD_REGISTRY[field].format === "array"
+      ? "Array fields stay inside <<ITEM n>> markers. A blank line inside an item is part of that item."
+      : "",
     "Return JSON with field, patchedText, and changed.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   if (user.includes("<<TIER_A>>") || user.includes("<<FIELD_CONTRACT>>")) {
     throw new Error("repair prompt leaked card context");
   }
@@ -225,7 +254,7 @@ export async function repairField(
   if (!check.pass || parsed.changed !== true || typeof parsed.patchedText !== "string") return false;
   const def = FIELD_REGISTRY[field];
   const value = def.format === "array"
-    ? parsed.patchedText.split("\n").map((s) => s.trim()).filter(Boolean)
+    ? parseItems(parsed.patchedText).map((item) => balanceMarkdown(item.trim())).filter(Boolean)
     : balanceMarkdown(parsed.patchedText.trim());
   const tokens = remember(card, field, value);
   card.fields[field].tokens = tokens;

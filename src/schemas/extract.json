@@ -24,7 +24,8 @@
         "mes_example": { "$ref": "#/$defs/cand" },
         "system_prompt": { "$ref": "#/$defs/cand" },
         "post_history_instructions": { "$ref": "#/$defs/cand" },
-        "creator_notes": { "$ref": "#/$defs/cand" }
+        "creator_notes": { "$ref": "#/$defs/cand" },
+        "name": { "$ref": "#/$defs/cand" }
       }
     }
   },

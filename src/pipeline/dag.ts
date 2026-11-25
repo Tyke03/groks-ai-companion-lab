@@ -18,8 +18,8 @@ export function walkStages(card: Card): WalkStage[] {
 export function shouldGenerate(card: Card, field: FieldName): boolean {
   if (field === "creator" || field === "character_version") return false;
   if (field === "group_only_greetings" && !card.meta.groupCard) return false;
-  if (card.fields[field].policy.locked) return false;
-  return true;
+  const policy = card.fields[field].policy;
+  return !policy.locked || isEmptyValue(card.fields[field].value);
 }
 
 export function shouldKeepDerived(card: Card, field: "creator" | "character_version"): boolean {

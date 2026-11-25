@@ -1,6 +1,7 @@
 import { INJECTION_GUARD } from "../context/assembler";
-import type { Card, CardMeta, FieldName } from "../domain/card";
-import { createEmptyCard } from "../domain/create";
+import type { Card, CardMeta, FieldName, PlanRecord } from "../domain/card";
+import { fieldText, isEmptyValue } from "../domain/card";
+import { createEmptyCard, writeField } from "../domain/create";
 import { buildRequest, complete } from "../llm/client";
 import { parseModelJson, type LlmClient } from "../llm/types";
 import { STAGE_PROMPTS } from "../prompts/load";
@@ -23,7 +24,31 @@ export function sniff(raw: string): SourceFormat {
   return "raw";
 }
 
-/** Sniff, extract, redistribute. Content fields land unlocked, included, and marked imported_raw. */
+function nameFromRaw(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as { name?: unknown; data?: { name?: unknown } };
+    const name = parsed.data?.name ?? parsed.name;
+    return typeof name === "string" ? name.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function asPlan(parsed: unknown): PlanRecord | null {
+  if (!validateSchema("plan", parsed).pass) return null;
+  const body = parsed as PlanRecord;
+  const ownership: Record<string, string> = {};
+  for (const [key, value] of Object.entries(body.ownership ?? {})) {
+    if (typeof value === "string" && value.trim()) ownership[key] = value.trim();
+  }
+  return {
+    ownership,
+    contradictions: Array.isArray(body.contradictions) ? body.contradictions : [],
+    directives: (body.directives ?? []).filter((item) => typeof item === "string" && item.trim()),
+  };
+}
+
+/** Sniff, extract, plan, then redistribute. Content fields land unlocked, included, and marked imported_raw. */
 export async function convertCharacter(
   raw: string,
   llm: LlmClient,
@@ -31,11 +56,53 @@ export async function convertCharacter(
 ): Promise<Card> {
   const format = sniff(raw);
   const card = createEmptyCard({ ...meta, sourceFormat: format });
-  const user = [INJECTION_GUARD, STAGE_PROMPTS.extract, `<<SOURCE field="blob">>\n${raw}\n<<END_SOURCE>>`].join("\n\n");
-  const req = buildRequest({ route: routeFor("extract"), stage: "extract", user, cardId: "import", attempt: 1 });
-  const live = await complete(llm, req);
+  let systemCacheHit = false;
+  const extractUser = [INJECTION_GUARD, STAGE_PROMPTS.extract, `<<SOURCE field="blob">>\n${raw}\n<<END_SOURCE>>`].join("\n\n");
+  const extractReq = buildRequest({
+    route: routeFor("extract"),
+    stage: "extract",
+    user: extractUser,
+    cardId: "import",
+    attempt: 1,
+    systemCacheHit,
+  });
+  const live = await complete(llm, extractReq);
+  systemCacheHit = true;
   const parsed = parseModelJson(live.content) as { fields: Partial<Record<FieldName, ExtractCandidate>> };
   if (!validateSchema("extract", parsed).pass) throw new Error("extract schema failed");
+
+  const planUser = [
+    INJECTION_GUARD,
+    STAGE_PROMPTS.plan,
+    `<<SOURCE field="blob">>\n${raw}\n<<END_SOURCE>>`,
+    `<<SOURCE field="extract">>\n${JSON.stringify(parsed.fields)}\n<<END_SOURCE>>`,
+  ].join("\n\n");
+  try {
+    const planReq = buildRequest({
+      route: routeFor("plan"),
+      stage: "plan",
+      user: planUser,
+      cardId: "import",
+      attempt: 1,
+      systemCacheHit,
+    });
+    const planned = await complete(llm, planReq);
+    card.meta.plan = asPlan(parseModelJson(planned.content)) ?? undefined;
+  } catch {
+    card.meta.plan = undefined;
+  }
+
   redistribute(card, parsed.fields);
+  if (isEmptyValue(card.fields.name.value)) {
+    const named = nameFromRaw(raw);
+    if (named) {
+      writeField(card, "name", named, { locked: false, useAsContext: true, origin: "imported_raw" });
+    }
+  }
+  const description = fieldText(card.fields.description.value).trim();
+  const source = raw.trim();
+  if (description && (description === source || (source.includes(description) && description.length >= source.length * 0.85))) {
+    writeField(card, "description", "", { locked: false, useAsContext: true, origin: "generated" });
+  }
   return card;
 }

@@ -1,0 +1,1 @@
+Compare the card fields you are given. Return JSON {"findings":[...]}. Each finding needs a and b (field names), kind (timeline, relationship, trait, agency, jargon, or bleed), quoteA and quoteB copied verbatim from those fields, and a one-sentence fix. If nothing conflicts, return {"findings":[]}. Never invent a quote.

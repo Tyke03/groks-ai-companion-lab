@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ownership", "contradictions", "directives"],
+  "properties": {
+    "ownership": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "contradictions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["a", "b", "kind", "quoteA", "quoteB"],
+        "properties": {
+          "a": { "type": "string" },
+          "b": { "type": "string" },
+          "kind": { "type": "string" },
+          "quoteA": { "type": "string" },
+          "quoteB": { "type": "string" }
+        }
+      }
+    },
+    "directives": { "type": "array", "items": { "type": "string" } }
+  }
+}

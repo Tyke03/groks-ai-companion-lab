@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fields"],
+  "properties": {
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "personality",
+        "scenario",
+        "first_mes",
+        "mes_example",
+        "system_prompt",
+        "post_history_instructions",
+        "creator_notes"
+      ],
+      "properties": {
+        "description": { "$ref": "#/$defs/cand" },
+        "personality": { "$ref": "#/$defs/cand" },
+        "scenario": { "$ref": "#/$defs/cand" },
+        "first_mes": { "$ref": "#/$defs/cand" },
+        "mes_example": { "$ref": "#/$defs/cand" },
+        "system_prompt": { "$ref": "#/$defs/cand" },
+        "post_history_instructions": { "$ref": "#/$defs/cand" },
+        "creator_notes": { "$ref": "#/$defs/cand" }
+      }
+    }
+  },
+  "$defs": {
+    "cand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "confidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceSpans": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

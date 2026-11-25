@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec", "spec_version", "data"],
+  "properties": {
+    "spec": { "const": "chara_card_v3" },
+    "spec_version": { "const": "3.0" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "personality",
+        "scenario",
+        "first_mes",
+        "alternate_greetings",
+        "mes_example",
+        "system_prompt",
+        "post_history_instructions",
+        "creator_notes",
+        "creator",
+        "character_version",
+        "tags",
+        "extensions",
+        "creation_date",
+        "modification_date"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "nickname": { "type": "string" },
+        "description": { "type": "string" },
+        "personality": { "type": "string" },
+        "scenario": { "type": "string" },
+        "first_mes": { "type": "string" },
+        "alternate_greetings": { "type": "array", "items": { "type": "string" } },
+        "group_only_greetings": { "type": "array", "items": { "type": "string" } },
+        "mes_example": { "type": "string" },
+        "system_prompt": { "type": "string" },
+        "post_history_instructions": { "type": "string" },
+        "creator_notes": { "type": "string" },
+        "creator": { "type": "string" },
+        "character_version": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "extensions": { "type": "object" },
+        "creation_date": { "type": "number" },
+        "modification_date": { "type": "number" },
+        "character_book": { "type": "object" }
+      }
+    }
+  }
+}

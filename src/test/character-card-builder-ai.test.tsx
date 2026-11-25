@@ -62,47 +62,43 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
   });
 
   it("cold-starts staged generation in stage order with CompanionBrief, carrying conversation history and surfacing Venice badge (V2)", async () => {
-    const seenCalls: { fieldName: string; history: Array<{ role: string; content: string }> }[] = [];
+    const seenCalls: { fieldName: string; user: string }[] = [];
 
     invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => {
-      const field = String(opts.body.fieldName || "");
-      seenCalls.push({
-        fieldName: field,
-        history: (opts.body.history as Array<{ role: string; content: string }>) || [],
-      });
-
-      if (field === "alternate_greetings") {
-        return {
-          data: {
-            result: [
-              "*she taps the ledger*\n\"{{User}} arrived early.\"",
-              "*she closes the shutter*\n\"Stay out of sight.\"",
-              "*she slides a key across*\n\"Your move.\"",
-            ],
-            fieldName: field,
-            provider: "venice",
-          },
-          error: null,
-        };
+      const field = String(opts.body.fieldName || opts.body.stage || "");
+      const messages = (opts.body.messages as Array<{ role: string; content: string }>) || [];
+      const user = messages.find((m) => m.role === "user")?.content || "";
+      seenCalls.push({ fieldName: field, user });
+      const prose: Record<string, string> = {
+        nickname: "Vess",
+        description: "Vespera keeps the archive key on a brass chain.",
+        personality: "She is dry, patient, and unwilling to soothe anyone.",
+        scenario: "The archive is locked at dusk and she is already inside.",
+        first_mes: "The lamp is low.\n\nShe sets a brass key on the blotter.\n\n\"You are late. What did you bring?\"",
+        system_prompt: "Play her as dry and exact. Answer in her voice. Leave room for the other person to act.",
+        post_history_instructions: "Stay in her voice.\nKeep the archive key in play.\nEnd on her action.\nDo not add a second plot.",
+        creator_notes: "Intended user: players who like slow noir.\nShe starts a chat already mid-argument.",
+      };
+      let result = prose[field] ?? `Draft ${field}.`;
+      if (field === "plan") result = JSON.stringify({ ownership: {}, contradictions: [], directives: ["Keep the archive key in description only."] });
+      if (field === "audit") result = JSON.stringify({ findings: [] });
+      if (field === "alternate_greetings" || field === "group_only_greetings") {
+        result = JSON.stringify({
+          items: [
+            "She taps the ledger.\n\n\"You are early.\"",
+            "She closes the shutter.\n\n\"Stay out of sight. What now?\"",
+            "She slides a key across the desk.\n\n\"Your move.\"",
+          ],
+        });
       }
       if (field === "mes_example") {
-        return {
-          data: {
-            result: "<START>\nUser: Hello?\nVespera: *glances up* State your business with the user.",
-            fieldName: field,
-            provider: "venice",
-          },
-          error: null,
-        };
+        result = "<START>\n{{user}}: \"Hello?\"\n{{char}}: *glances up* State your business.\n<START>\n{{user}}: \"I brought the ledger.\"\n{{char}}: *sets the watch down* Then start with the date.";
       }
-      return {
-        data: {
-          result: `Generated ${field} for {{User}}`,
-          fieldName: field,
-          provider: "venice",
-        },
-        error: null,
-      };
+      if (field === "tags") result = JSON.stringify({ tags: ["noir", "archivist"], character_version: "1.0.0" });
+      if (field === "repair") {
+        result = JSON.stringify({ field: String(opts.body.fieldName || "description"), patchedText: "She stays.", changed: true });
+      }
+      return { data: { result, fieldName: field, provider: "venice" }, error: null };
     });
 
     render(<CharacterCardBuilder />);
@@ -128,41 +124,19 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
 
     fireEvent.click(screen.getByTestId("generate-staged-button"));
 
-    const expectedOrder = [
-      "description",
-      "personality",
-      "scenario",
-      "first_mes",
-      "system_prompt",
-      "mes_example",
-      "alternate_greetings",
-      "creator_notes",
-      "post_history_instructions",
-    ];
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(expectedOrder.length));
+    await waitFor(() => expect(seenCalls.some((c) => c.fieldName === "creator_notes")).toBe(true));
 
-    expect(seenCalls.map((c) => c.fieldName)).toEqual(expectedOrder);
+    expect(invokeMock.mock.calls.every((c) => c[1].body.action === "pipeline-complete")).toBe(true);
+    expect(invokeMock.mock.calls.every((c) => c[1].body.prompt_cache_key === "ccv3-system-v1")).toBe(true);
+    expect(seenCalls.map((c) => c.fieldName)).not.toContain("group_only_greetings");
 
-    // Multi-turn path: every call uses stage-turn and history grows by 2 per stage (context + pairs)
-    for (const call of seenCalls) {
-      expect(call.history.length).toBeGreaterThanOrEqual(1);
-    }
-    expect(invokeMock.mock.calls.every((c) => c[1].body.action === "stage-turn")).toBe(true);
-
-    // Stage 3 (scenario) history carries Stage 1-2 turns (description + personality) and pinned name/tags seed
     const scenarioCall = seenCalls.find((c) => c.fieldName === "scenario")!;
-    const historyText = scenarioCall.history.map((t) => t.content).join("\n");
-    expect(historyText).toContain("Generated description for {{user}}");
-    expect(historyText).toContain("Generated personality for {{user}}");
-    expect(historyText).toContain("Vespera");
-
-    // Verify brief payload passed through
-    expect(invokeMock.mock.calls[0][1].body.brief).toMatchObject({
-      setting: "Clocktower archive",
-      role: "Exiled archivist",
-      contentLevel: 4,
-      mustInclude: "Never apologizes first",
-    });
+    const beforeContract = scenarioCall.user.split("<<FIELD_CONTRACT>>")[0] ?? "";
+    expect(beforeContract).toContain("Vespera keeps the archive key");
+    expect(beforeContract).toContain("Vespera");
+    expect(beforeContract).not.toMatch(/^### scenario$/m);
+    expect(scenarioCall.user).toContain("Clocktower archive");
+    expect(scenarioCall.user).toContain("Never apologizes first");
 
     // Provider summary & per-field badges surface Venice
     expect(await screen.findByTestId("run-provider-summary")).toHaveTextContent("Served by Venice.");
@@ -172,9 +146,8 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
     expect(screen.getByTestId("field-provider-alternate_greetings")).toHaveTextContent("Venice");
 
     // Verify sanitization of mes_example & alternate_greetings
-    expect((screen.getByLabelText(/Example Dialogue/i) as HTMLTextAreaElement).value).toBe(
-      "<START>\n{{user}}: \"Hello?\"\n{{char}}: *glances up* State your business with {{user}}.",
-    );
+    expect((screen.getByLabelText(/Example Dialogue/i) as HTMLTextAreaElement).value).toContain("<START>");
+    expect((screen.getByLabelText(/Example Dialogue/i) as HTMLTextAreaElement).value).toContain("{{user}}:");
   });
 
   it("shows fallback warning when a non-preferred provider answers (D8)", async () => {

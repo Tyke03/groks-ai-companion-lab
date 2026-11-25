@@ -1,0 +1,1 @@
+Return JSON {"tags": string[], "character_version": "1.0.0"}. At most 12 tags, each at most 40 characters, lowercase. Do not change an existing character_version; echo "1.0.0" only as a placeholder the code will ignore.

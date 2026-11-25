@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["a", "b", "kind", "quoteA", "quoteB", "fix"],
+        "properties": {
+          "a": { "type": "string" },
+          "b": { "type": "string" },
+          "kind": { "enum": ["timeline", "relationship", "trait", "agency", "jargon", "bleed"] },
+          "quoteA": { "type": "string" },
+          "quoteB": { "type": "string" },
+          "fix": { "type": "string" }
+        }
+      }
+    }
+  }
+}

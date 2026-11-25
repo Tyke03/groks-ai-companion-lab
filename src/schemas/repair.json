@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["field", "patchedText", "changed"],
+  "properties": {
+    "field": { "type": "string" },
+    "patchedText": { "type": "string" },
+    "changed": { "type": "boolean" }
+  }
+}

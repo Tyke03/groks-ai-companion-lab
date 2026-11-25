@@ -1,0 +1,1 @@
+You receive one field body and one finding. Return JSON {"field","patchedText","changed"}. patchedText is the whole field, not a diff. If you cannot fix it, set changed to false and return the original body. Do not add facts from outside the field.

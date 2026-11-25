@@ -1,0 +1,1 @@
+Read the card so far. Return JSON with ownership (field name to the one fact it owns), contradictions (only pairs whose quotes are copied verbatim), and directives (short orders for later fields). Do not write field prose.

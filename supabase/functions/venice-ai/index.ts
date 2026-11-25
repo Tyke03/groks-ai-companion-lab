@@ -1209,7 +1209,7 @@ async function callVeniceStreaming(
 /** OpenAI-compatible non-streaming call. Timeout ALWAYS applied (R6). */
 async function callOpenAiCompatible(
   provider: ProviderId, apiKey: string, model: string, messages: Array<{ role: string; content: string }>,
-  maxTokens: number, temperature: number, jsonMode: boolean,
+  maxTokens: number, temperature: number, jsonMode: boolean, extras?: Record<string, unknown>,
 ): Promise<string> {
   const payload: Record<string, unknown> = {
     model,
@@ -1217,8 +1217,13 @@ async function callOpenAiCompatible(
     max_tokens: maxTokens,
     temperature,
   };
+  if (extras) {
+    for (const [key, value] of Object.entries(extras)) {
+      if (value !== undefined && value !== null && value !== '') payload[key] = value;
+    }
+  }
   if (provider === 'venice') payload.venice_parameters = VENICE_PARAMETERS;
-  if (jsonMode && PROVIDER_JSON_MODE[provider]) payload.response_format = { type: 'json_object' };
+  if (!payload.response_format && jsonMode && PROVIDER_JSON_MODE[provider]) payload.response_format = { type: 'json_object' };
   const timeoutMs = maxTokens >= 4096 ? WHOLE_CARD_TIMEOUT_MS : PROVIDER_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1663,6 +1668,44 @@ ${text}`;
       });
       const final = await finalizeField(content, prompt, CARD_FIELD_SYSTEM, provider);
       return jsonResponse({ result: final.cleaned, fieldName: fieldKey, wholeCardBuilt: false, provider: final.provider });
+    }
+    /* --- CODE-GATED PIPELINE: one typed stage, model chosen by the router --- */
+    if (action === 'pipeline-complete') {
+      const messages = Array.isArray(body.messages) ? body.messages as Array<{ role: string; content: string }> : [];
+      if (messages.length === 0) return jsonResponse({ error: 'messages are required' }, 400);
+      const model = String(body.model || '').trim();
+      const maxTokens = Math.min(Math.max(Number(body.max_completion_tokens) || 1024, 16), 16384);
+      const temperature = clampTemperature(body.temperature, 0.7);
+      const extras: Record<string, unknown> = {
+        top_p: body.top_p,
+        frequency_penalty: body.frequency_penalty,
+        presence_penalty: body.presence_penalty,
+        seed: body.seed,
+        prompt_cache_key: body.prompt_cache_key,
+        response_format: body.response_format,
+      };
+      if (body.reasoning_effort && body.reasoning_effort !== 'none') extras.reasoning_effort = body.reasoning_effort;
+      const venice = providers.find((p) => p.id === 'venice');
+      if (venice && model) {
+        try {
+          const content = await callOpenAiCompatible(
+            'venice', venice.key, model, messages, maxTokens, temperature, !!body.response_format, extras,
+          );
+          return jsonResponse({
+            result: content,
+            fieldName: body.fieldName,
+            provider: venice.isByok ? 'venice-byok' : 'venice',
+            model,
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`pipeline-complete ${model} failed:`, msg);
+        }
+      }
+      const { content, provider } = await runCascade({
+        messages, maxTokens, temperature, jsonMode: !!body.response_format, providers,
+      });
+      return jsonResponse({ result: content, fieldName: body.fieldName, provider, model });
     }
     /* --- STAGE TURN: multi-turn staged generation (frozen CARD_PRIMER + append-only history) --- */
     if (action === 'stage-turn') {

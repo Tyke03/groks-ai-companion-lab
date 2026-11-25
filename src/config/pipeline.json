@@ -1,0 +1,10 @@
+{
+  "maxCardCostUSD": 0.06,
+  "repairsPerField": 1,
+  "escalationsPerCard": 2,
+  "auditCyclesPerCard": 3,
+  "parallelGreetings": 4,
+  "cacheKey": "ccv3-system-v1",
+  "budgetHardFail": 1.0,
+  "regenerateTarget": 0.85
+}

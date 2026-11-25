@@ -27,6 +27,9 @@ import {
 } from "@/lib/cardFieldMeta";
 import type { CardData } from "@/lib/cardTypes";
 import { edgeInvokeError } from "@/lib/llmErrors";
+import { cardFromBuilder, briefToText } from "@/pipeline/fromBuilder";
+import { generateCard } from "@/pipeline/generateCard";
+import { createSupabaseLlm } from "@/llm/supabaseClient";
 
 export interface CompanionBrief {
   setting?: string;
@@ -385,6 +388,53 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
     (import.meta as { env?: { MODE?: string } }).env?.MODE === "test"
       ? 0
       : 350;
+
+  if (opts.conversation) {
+    const authoring = cardFromBuilder(working, effectivePolicies, {
+      groupCard: opts.specVersion === "v3",
+    });
+    const generated = await generateCard(authoring, {
+      llm: createSupabaseLlm(),
+      cardId: "builder",
+      brief: briefToText(opts.brief),
+      planMode: "always",
+      control: opts.control,
+      onFieldStart: (field) => opts.onFieldStart?.(field as keyof CardData, field),
+      onFieldDone: (field, status, provider) => {
+        if (status !== "filled") return;
+        const outcome: FieldOutcome = {
+          field: field as keyof CardData,
+          stageId: field,
+          status: "filled",
+          provider,
+        };
+        outcomes.push(outcome);
+        opts.onFieldDone?.(outcome);
+      },
+    });
+    for (const outcome of generated.outcomes) {
+      if (outcome.status === "filled") {
+        working = applyFieldResult(working, outcome.field as keyof CardData, authoring.fields[outcome.field].value);
+        if (!outcomes.some((existing) => existing.field === outcome.field && existing.status === "filled")) {
+          outcomes.push({
+            field: outcome.field as keyof CardData,
+            stageId: outcome.field,
+            status: "filled",
+          });
+        }
+        continue;
+      }
+      outcomes.push({
+        field: outcome.field as keyof CardData,
+        stageId: outcome.field,
+        status: outcome.status === "blocked" || outcome.status === "cost" ? "failed" : "skipped",
+      });
+    }
+    if (generated.aborted || opts.control?.aborted) {
+      return { card: sanitizeCardData(working), outcomes, aborted: true };
+    }
+    return { card: sanitizeCardData(working), outcomes, aborted: false };
+  }
 
   for (const stage of STAGES) {
     if (opts.control?.aborted) return { card: working, outcomes, aborted: true };

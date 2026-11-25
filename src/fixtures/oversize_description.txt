@@ -1,0 +1,1 @@
+oversize placeholder — the test builds a measured token string

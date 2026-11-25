@@ -152,6 +152,66 @@ Write ONLY the revised field text. No JSON, no markdown fences, no commentary.`;
 /* ============================================================
    CONSTANTS
    ============================================================ */
+/* ============================================================
+   CARD PRIMER — frozen system preface for multi-turn staged
+   generation (action: stage-turn). NEVER edit this text between
+   releases of a single conversation: the primer is a byte-stable
+   prefix so provider prompt caching stays valid (append-only chat).
+   ============================================================ */
+const CARD_PRIMER = `You are a Character Card specialist. You write the fields of Character Card V3 cards for roleplay frontends. You are an author of reference material, never a roleplay partner: nothing you write is a scene you are playing. Your output is read twice: by a runtime language model that will become the character, and by a human who browses, edits and shares the card. Every field serves one of those readers, and good craft is knowing which.
+
+PART 1. THE FORMAT
+A character card is a JSON document (also embedded in PNG text chunks, or zipped as CHARX) that a chat frontend loads to set up a roleplay. Three generations exist.
+- V1 (TavernAI): six flat string fields: name, description, personality, scenario, first_mes, mes_example.
+- V2 (chara_card_v2, spec_version "2.0"): wraps them in {spec, spec_version, data:{...}} and adds creator_notes, system_prompt, post_history_instructions, alternate_greetings, character_book (an embedded lorebook), tags, creator, character_version, extensions.
+- V3 (chara_card_v3, spec_version "3.0"): keeps everything in V2 and adds nickname, creator_notes_multilingual, source (array of URLs), group_only_greetings (required, may be an empty array), assets (icons, backgrounds, emotions; omitted means the default icon, an empty array means none), creation_date and modification_date (Unix seconds), and lorebook upgrades with @@ decorators. extensions is an open object: unknown keys belong to other tools and must survive untouched.
+Each field you are asked to write is a plain string (or an array of strings) inside data. You write content, never wrapper JSON, unless a task says so.
+
+PART 2. THE RUNTIME: WHAT HAPPENS TO EACH FIELD
+This is the most important knowledge you have. Frontends (SillyTavern, TavernAI-family, Chub, and similar) assemble every request to the chat model from the card. [Details below describe SillyTavern conventions unless marked as spec; they are the de facto behavior, not guaranteed by the spec.]
+- name: shown in the UI and used for message labels. nickname (V3), when set, is what {{char}} expands to; otherwise {{char}} is the name. Use {{char}} everywhere in prose so renaming or nicknaming never leaves stale literal names.
+- description: injected into the model context on every turn, for the whole chat. It is the character's permanent fact sheet: who they are, what they look like, what happened to them. Because it is resent every turn, every sentence costs tokens on every message, and a fact stated here is already known everywhere else.
+- personality: also injected every turn. A compact psychological portrait: temperament, voice, habits, tells, what triggers shifts in mood, the character's own limits. It describes the person. It is not a place for instructions to the AI.
+- scenario: injected every turn. The situation right now: where, with whom, what is at stake. It is the present tense of the story, not the backstory and not a rulebook.
+- first_mes: the opening message, shown as the character's first turn. It sets tone, format, length and pacing for everything after, because the chat model imitates what is already in the conversation. It is also the only field the human reads before deciding to chat.
+- alternate_greetings: extra openers the user can swipe between. Each is a different way to enter the story, so a different place, relationship stage or power dynamic, not a rephrase. group_only_greetings (V3): the same, used only in group chats where other characters are present, so they may acknowledge them; an empty array is valid.
+- mes_example: few-shot dialogue examples. They are injected as sample conversations (usually trimmed away once the chat is long), and the model copies their voice, rhythm, length and formatting very strongly. The convention is blocks that each begin with a <START> line alone, followed by lines starting "{{user}}:" and "{{char}}:". The speaker labels are macros, never the literal name. Use uniform "double quotes" for spoken dialogue on BOTH {{user}}: and {{char}}: lines, with *single asterisks* for actions and thoughts, so the sample is consistent for the model to imitate. Examples teach how the character speaks; they must agree with the facts in description and scenario because the model treats them as true.
+- system_prompt: instructions to the model about how to run the roleplay with this character. In SillyTavern it can replace the user's main prompt when the user allows card overrides. The macro {{original}} inside it expands to the user's own preset prompt, so a card that opens with {{original}} adds to the user's setup instead of erasing it. This is where directives belong: voice and format rules, how to enforce the character's boundaries, how progression states play out.
+- post_history_instructions: injected after the chat history, nearest to the model's next reply, which is the most influential position. It is a short reminder, and {{original}} here likewise keeps the user's own post-history text. Its size matters: it is paid on every turn, and a long one competes with the conversation. Put only the two or three hooks that drift first.
+- creator_notes: never sent to the model; shown to humans on the card page. Frontends display it as written, so macros like {{user}} and {{char}} are not expanded there and would appear as raw braces. Write it for a person: usage tips, tone and pacing notes, content warnings, who the card assumes the user is, and a fictional-portrayal disclaimer when the character is based on a real person. Never use internal jargon (generator settings, level numbers) that a reader cannot interpret, and never put a rule here that the model needs, because the model never sees it.
+- tags: search labels for humans. Archetype, role, setting, genre; lowercase, deduplicated; multi-word tags use spaces.
+- character_book (lorebook): keyword-triggered entries inserted only when their keys appear. Entries marked "constant" are always inserted. This is where large optional lore belongs, so it costs nothing until relevant.
+Macros: {{char}} and {{user}} are replaced at runtime with the character and the user's persona name. They are lowercase and exact: {{user}}'s, never {{User's}}. They work in model-facing fields and greetings, and not in creator_notes. Text between asterisks conventionally renders as italics for actions and thoughts; text in double quotes is speech. A frontend renders by pairing delimiters, so one unclosed * or " makes everything after it render inverted. Every opened delimiter must be closed in the same paragraph.
+
+PART 3. THE POINT OF VIEW RULE
+The user plays {{user}}. The model plays {{char}}. A card that writes {{user}}'s actions, thoughts, arrival, gaze or choices takes the user's agency away and trains the model to do the same on every turn. This covers disguised forms: an alias ("the guest walks in"), a collective subject ("neither looks away", "they both know"), a joint action that has not yet been played ("two rounds in"), or a statement of what {{user}} feels. You may state what {{char}} does, perceives and says. You may address {{user}} in dialogue. You may describe facts about {{user}} that the card itself defines as the premise (a role, a history), always through the macro {{user}}, never as an unnamed stranger. Fields that describe the character (description, personality, scenario) use a third-person authorial voice. Fields that are the character speaking (greetings, mes_example) are in-character, formatted "dialogue" plus *actions*. system_prompt and post_history_instructions address the model directly in second person.
+
+PART 4. THE TOOL YOU ARE INSIDE
+You work in a card builder that fills the fields in a fixed order inside one conversation: name and nickname, description, personality, scenario, first_mes, mes_example, alternate_greetings, group_only_greetings, system_prompt, post_history_instructions, creator_notes, tags, then a consistency pass. Everything you have already written is in this conversation, and later fields are written by reading it. Each turn I name one field and give the task; you return only that field's text, with no commentary, no markdown fences and no JSON unless told. Hard character budgets (a field over its budget is cut or rejected, so count while you write and aim ten percent under): description 2200, personality 1300, scenario 1100, first_mes 1800, mes_example 3600, each alternate greeting 1400, system_prompt 1600, post_history_instructions 550, creator_notes 900, tags 250, name and nickname 60. Characters, not tokens.
+Each field the creator filled by hand may be "locked" (an anchor: keep verbatim, never contradict) or "unlocked" (a seed: extract its facts and intent, then rewrite it cleanly in the proper format rather than echoing its wording). The creator chooses a policy: Seed & Rewrite (use seeds as raw material), Fresh Roll (ignore existing text and invent), Pinned Anchor (only locked fields constrain), or Isolated (the field is written from the brief alone). The task message tells you which applies. Raw dumps in a seed (JSON, W++, labelled lists) are material to be digested, never a layout to copy.
+
+PART 5. ONE FACT, ONE OWNER
+A card is a budget, and the runtime pays for every sentence on every turn. A fact stated in four fields is paid four times, and worse, can be edited into four different versions, so the model gets contradictory instructions. So every piece of content has exactly one home, and the other fields lean on it by reading it, not repeating it.
+- description owns who the character is: identity, role, appearance, history, including history with {{user}}. It holds no rules, no win conditions, no chat instructions, no dialogue. Layout is plain prose paragraphs separated by blank lines (identity and role, then appearance, then background). Bold sub-headers like "**Appearance:**" are bloat: they burn characters, add nothing the model needs, and invite the frontend to render clutter.
+- personality owns psychology: about ten consolidated traits without conflicting pairs, speech and mannerism quirks, what shifts their mood, their own in-world limits, in one or two paragraphs without sub-headers. It describes a person, so a sentence that tells the AI what to do ("never narrates the user", "stays in character", "pushes risky scenarios") is in the wrong field; that is system_prompt's job. It also does not repeat appearance or setting.
+- scenario owns the present: immediate setting, the relationship as it stands, and the live tension, in one or two paragraphs. No backstory (description), no appearance, no staged progression ladder and no instructions to the AI (system_prompt).
+- first_mes and the alternates own the opening moments. They teach format by example, so they use exactly the format the card promises: "dialogue" and *actions*, with {{char}} for the name. They introduce nothing the other fields contradict. They do not explain the premise; they dramatize it. An alternate that changes the setting simply is the new setting; the model does not need a sentence explaining how the rest still applies, and such meta commentary breaks immersion and leaks into replies.
+- mes_example owns voice by demonstration: exactly three blocks, escalating (public mask, then private core dynamic, then high stakes and vulnerability), never three greetings. Facts, names, timing and relationship stage must match description and scenario; check every time marker ("this morning", "eight months ago") against what the card already says, because a model reads an example as ground truth. Use the same quoting convention for both speakers on every line so the sample is uniform.
+- system_prompt owns directives: always open with {{original}} alone on its first line, then the second-person instructions: how to hold the character's voice and format, how to enforce boundaries, and, if the premise has a progression (slow burn, corruption, a contest), the three to five NAMED, OBSERVABLE states with their physical or verbal tells. A model cannot keep a hidden numeric tally across a long chat, so never ask for counts or points; a named state it can see itself performing is trackable. The state list lives here only. No appearance, no setting, no history, no format style the greetings do not use, and no hardcoded name: use {{char}}.
+- post_history_instructions owns the last-line reminder: {{original}} first, then at most two or three hooks that decay fastest in long chats (voice and POV, the active state, never narrate {{user}}). It restates nothing else.
+- creator_notes owns everything meant for human readers and nothing the model needs. Third-person English, no macros, no internal labels, no behavioral rule that is absent from the model-facing fields. If the card assumes a specific user persona, say it in a plain line ("Intended user: ..."). If the character is based on a real person, state that this is a fictional portrayal not affiliated with or endorsed by them.
+- tags own discoverability. Prefer defining traits (the character's actual role and setting) over generic labels like "romance" or "drama" and over mechanic labels.
+When a fact belongs to an earlier field, do not re-narrate it. Use it implicitly: a greeting shows the character's appearance through one action instead of listing it; a system_prompt names a state rather than re-explaining the relationship. When you notice earlier text that is wrong, say nothing in the field: report it in the consistency pass.
+
+PART 6. WRITING STANDARDS
+- Specific beats generic. A single concrete habit tells more than three adjectives. Prefer verbs and observable behavior over labels.
+- Write the character at their most characteristic, not their most extreme. A model amplifies whatever it is given.
+- Keep one consistent timeline and one consistent set of facts. Before finishing a field, check it against everything already in the conversation: names, ages, durations, who knows what, relationship stage.
+- Names: {{char}} and {{user}} in prose and dialogue labels; the literal name only where the field is plain human text such as creator_notes.
+- Proofread: articles (a/an), capitalization, closed delimiters, no stray empty "**", no doubled spaces. After any edit or repair, re-verify delimiters: every * and " opened must be closed.
+- Stay within the budget with room to spare. Cut adjectives before facts. Never pad to reach a budget.
+- Output only the field text. No labels, no preamble, no explanation, no quotation of the instruction.`;
+
 const CARD_FIELD_ORDER = [
   'name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example',
   'alternate_greetings', 'group_only_greetings', 'creator_notes', 'tags', 'nickname',
@@ -980,6 +1040,59 @@ PRESERVATION (non-conflicting only):
 - first_mes remains a single opener; mes_example remains three progression <START> blocks with {{user}}:/{{char}}: only.`;
 }
 /* ============================================================
+   MULTI-TURN STAGED GENERATION (primer + append-only conversation)
+   ============================================================ */
+interface StageTurnSpec {
+  field: string;
+  policy?: string;
+  temperature?: number;
+  charName?: string;
+}
+const FIELD_POLICY_LABELS: Record<string, string> = {
+  seed: 'Seed & Rewrite',
+  fresh: 'Fresh Roll',
+  anchor: 'Pinned Anchor',
+  isolated: 'Isolated',
+};
+function buildStageTurnPrompt(stage: StageTurnSpec): string {
+  const field = String(stage.field || '');
+  const budget = FIELD_CHAR_BUDGETS[field];
+  const aim = typeof budget === 'number' ? Math.round(budget * 0.9) : null;
+  const policyLabel = FIELD_POLICY_LABELS[String(stage.policy || '')] || 'Seed & Rewrite';
+  const isolated = policyLabel === 'Isolated';
+  const lines = [
+    `FIELD: ${field}`,
+    `POLICY: ${policyLabel}`,
+  ];
+  if (typeof budget === 'number') lines.push(`BUDGET: ${budget} characters max (aim ~${aim})`);
+  lines.push(
+    isolated
+      ? `TASK: Write ${field} from the creator brief alone. Other fields' content is not available; do not invent facts from them.`
+      : `TASK: Write ${field} for {{char}} from what the conversation already established. Do not restate content earlier turns claimed.`,
+  );
+  lines.push('OUTPUT: only the field text.');
+  return lines.join('\n');
+}
+/** Validate the client-supplied conversation history before it reaches any provider. */
+function validateStageHistory(raw: unknown): Array<{ role: string; content: string }> {
+  if (!Array.isArray(raw)) throw new Error('history must be an array of {role, content} turns');
+  const out: Array<{ role: string; content: string }> = [];
+  let total = 0;
+  for (const item of raw.slice(0, 120)) {
+    const rec = item as Record<string, unknown>;
+    const role = String(rec?.role ?? '');
+    const content = typeof rec?.content === 'string' ? rec.content : '';
+    if ((role !== 'user' && role !== 'assistant') || !content.trim()) {
+      throw new Error('history turns must be {role: "user"|"assistant", content: non-empty string}');
+    }
+    total += content.length;
+    if (total > 400_000) throw new Error('history too large');
+    out.push({ role, content });
+  }
+  return out;
+}
+
+/* ============================================================
    TRANSPORT
    ============================================================ */
 function sleepMs(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
@@ -1001,15 +1114,12 @@ function formatCascadeFailure(kind: 'whole-card' | 'generic', failures: string[]
 }
 /** Venice streaming with stall + wall-clock watchdog. */
 async function callVeniceStreaming(
-  apiKey: string, model: string, systemPrompt: string, userPrompt: string,
+  apiKey: string, model: string, messages: Array<{ role: string; content: string }>,
   maxTokens: number, temperature: number, jsonMode = false,
 ): Promise<string> {
   const payload: Record<string, unknown> = {
     model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
+    messages,
     max_tokens: maxTokens,
     temperature,
     stream: true,
@@ -1098,15 +1208,12 @@ async function callVeniceStreaming(
 }
 /** OpenAI-compatible non-streaming call. Timeout ALWAYS applied (R6). */
 async function callOpenAiCompatible(
-  provider: ProviderId, apiKey: string, model: string, systemPrompt: string, userPrompt: string,
+  provider: ProviderId, apiKey: string, model: string, messages: Array<{ role: string; content: string }>,
   maxTokens: number, temperature: number, jsonMode: boolean,
 ): Promise<string> {
   const payload: Record<string, unknown> = {
     model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
+    messages,
     max_tokens: maxTokens,
     temperature,
   };
@@ -1143,8 +1250,10 @@ async function callOpenAiCompatible(
   return content;
 }
 interface CascadeOptions {
-  system: string;
-  user: string;
+  system?: string;
+  user?: string;
+  /** Full multi-turn message history (multi-turn staged path); overrides system/user when present. */
+  messages?: Array<{ role: string; content: string }>;
   maxTokens: number;
   temperature: number;
   jsonMode?: boolean;
@@ -1153,6 +1262,9 @@ interface CascadeOptions {
   validate?: (content: string) => string | null;
 }
 async function runCascade(opts: CascadeOptions): Promise<{ content: string; provider: string }> {
+  const messages: Array<{ role: string; content: string }> = opts.messages && opts.messages.length > 0
+    ? opts.messages
+    : [{ role: 'system', content: opts.system ?? '' }, { role: 'user', content: opts.user ?? '' }];
   const failures: string[] = [];
   for (const p of opts.providers) {
     const label = p.id === 'oneprovider' ? 'OneProvider' : p.id === 'openrouter' ? 'OpenRouter' : 'Venice';
@@ -1163,14 +1275,14 @@ async function runCascade(opts: CascadeOptions): Promise<{ content: string; prov
             let content: string;
             try {
               content = await callVeniceStreaming(
-                p.key, model, opts.system, opts.user, opts.maxTokens, opts.temperature, opts.jsonMode === true,
+                p.key, model, messages, opts.maxTokens, opts.temperature, opts.jsonMode === true,
               );
             } catch (streamErr) {
               const streamMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
               if (/stream ended with empty content|connection died with no chunks/i.test(streamMsg)) {
                 console.warn(`Venice SSE returned empty (${model}), falling back to non-streaming call`);
                 content = await callOpenAiCompatible(
-                  'venice', p.key, model, opts.system, opts.user, opts.maxTokens, opts.temperature, opts.jsonMode === true,
+                  'venice', p.key, model, messages, opts.maxTokens, opts.temperature, opts.jsonMode === true,
                 );
               } else {
                 throw streamErr;
@@ -1193,7 +1305,7 @@ async function runCascade(opts: CascadeOptions): Promise<{ content: string; prov
     for (const model of p.models) {
       try {
         const content = await callOpenAiCompatible(
-          p.id, p.key, model, opts.system, opts.user, opts.maxTokens, opts.temperature, opts.jsonMode === true,
+          p.id, p.key, model, messages, opts.maxTokens, opts.temperature, opts.jsonMode === true,
         );
         const bad = opts.validate?.(content);
         if (bad) throw new Error(bad);
@@ -1551,6 +1663,50 @@ ${text}`;
       });
       const final = await finalizeField(content, prompt, CARD_FIELD_SYSTEM, provider);
       return jsonResponse({ result: final.cleaned, fieldName: fieldKey, wholeCardBuilt: false, provider: final.provider });
+    }
+    /* --- STAGE TURN: multi-turn staged generation (frozen CARD_PRIMER + append-only history) --- */
+    if (action === 'stage-turn') {
+      const { history, stage } = body;
+      if (!stage || typeof stage !== 'object' || !String((stage as Record<string, unknown>).field || '')) {
+        return jsonResponse({ error: 'stage.field is required' }, 400);
+      }
+      const spec = stage as StageTurnSpec;
+      const turns = validateStageHistory(history);
+      const fieldKey = String(spec.field);
+      const charName = String(spec.charName || '').trim();
+      const maxTok = FIELD_MAX_TOKENS[fieldKey] ?? 700;
+      const temperature = clampTemperature(spec.temperature, 0.75);
+      const budget = FIELD_CHAR_BUDGETS[fieldKey];
+      let messages: Array<{ role: string; content: string }> = [
+        { role: 'system', content: CARD_PRIMER },
+        ...turns,
+        { role: 'user', content: buildStageTurnPrompt(spec) },
+      ];
+      const { content, provider } = await runCascade({ messages, maxTokens: maxTok, temperature, providers });
+      let cleaned = cleanFieldText(content, fieldKey, charName);
+      // Same quality gates as finalizeField, with ONE in-request repair turn (history stays append-only client-side)
+      const narrationHit = findUserNarrationViolation(cleaned, fieldKey);
+      const metaLeakHit = findPersonalityMetaLeak(cleaned, fieldKey);
+      const overBudget = typeof budget === 'number' && cleaned.length > Math.round(budget * 1.1);
+      if (narrationHit || metaLeakHit || overBudget) {
+        const fixes: string[] = [];
+        if (narrationHit) fixes.push(`Remove {{user}} action narration (flagged: "${narrationHit}") — describe ONLY {{char}} and the environment, leaving room for {{user}} to act.`);
+        if (metaLeakHit) fixes.push(`Remove meta-chat/RP directive from personality (flagged: "${metaLeakHit}") — keep personality strictly in-world character psychology and boundaries.`);
+        if (overBudget && budget) fixes.push(`Condense from ${cleaned.length} chars to <= ${budget} chars while keeping every concrete fact and required format.`);
+        const repairMessages: Array<{ role: string; content: string }> = [
+          ...messages,
+          { role: 'assistant', content: cleaned },
+          { role: 'user', content: `QUALITY REPAIR PASS (fix ONLY the issues below on your previous draft and output ONLY the repaired "${fieldKey}" text):\n- ${fixes.join('\n- ')}` },
+        ];
+        try {
+          const retry = await runCascade({ messages: repairMessages, maxTokens: maxTok, temperature: Math.min(temperature, 0.65), providers });
+          const repaired = cleanFieldText(retry.content, fieldKey, charName);
+          if (repaired.trim()) cleaned = repaired;
+        } catch {
+          // Non-fatal: keep the initial cleaned result
+        }
+      }
+      return jsonResponse({ result: cleaned, fieldName: fieldKey, provider });
     }
     /* --- GENERATE ALL (one-shot whole-card; prefer staged client orchestration) --- */
     if (action === 'generate-all') {

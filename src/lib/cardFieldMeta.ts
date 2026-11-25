@@ -19,6 +19,23 @@ export type PolicyPresetLabel =
   | "Pinned Anchor"
   | "Isolated";
 
+/** Per-item character ceilings — mirrors FIELD_CHAR_BUDGETS / CARD_FIELD_BIBLE in venice-ai. */
+export const FIELD_CHAR_BUDGETS: Partial<Record<keyof CardData, number>> = {
+  name: 60,
+  nickname: 60,
+  description: 2200,
+  personality: 1300,
+  scenario: 1100,
+  first_mes: 1800,
+  mes_example: 3600,
+  alternate_greetings: 1400,
+  group_only_greetings: 1400,
+  system_prompt: 1600,
+  post_history_instructions: 550,
+  creator_notes: 900,
+  tags: 250,
+};
+
 export const CARD_DATA_KEYS: (keyof CardData)[] = [
   "name",
   "nickname",

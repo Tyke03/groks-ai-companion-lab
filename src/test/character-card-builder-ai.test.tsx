@@ -61,14 +61,14 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
     expect(exported.data.first_mes).toBe("{{user}}: Hey\n{{char}}: *waves at {{user}}*");
   });
 
-  it("cold-starts staged generation in stage order with CompanionBrief, carrying previous stages and surfacing Venice badge (V2)", async () => {
-    const seenCalls: { fieldName: string; existingFields: Record<string, unknown> }[] = [];
+  it("cold-starts staged generation in stage order with CompanionBrief, carrying conversation history and surfacing Venice badge (V2)", async () => {
+    const seenCalls: { fieldName: string; history: Array<{ role: string; content: string }> }[] = [];
 
     invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => {
       const field = String(opts.body.fieldName || "");
       seenCalls.push({
         fieldName: field,
-        existingFields: { ...(opts.body.existingFields as Record<string, unknown>) },
+        history: (opts.body.history as Array<{ role: string; content: string }>) || [],
       });
 
       if (field === "alternate_greetings") {
@@ -143,11 +143,18 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
 
     expect(seenCalls.map((c) => c.fieldName)).toEqual(expectedOrder);
 
-    // Stage 2 (scenario) receives Stage 1 (description + personality) and pinned name/tags
+    // Multi-turn path: every call uses stage-turn and history grows by 2 per stage (context + pairs)
+    for (const call of seenCalls) {
+      expect(call.history.length).toBeGreaterThanOrEqual(1);
+    }
+    expect(invokeMock.mock.calls.every((c) => c[1].body.action === "stage-turn")).toBe(true);
+
+    // Stage 3 (scenario) history carries Stage 1-2 turns (description + personality) and pinned name/tags seed
     const scenarioCall = seenCalls.find((c) => c.fieldName === "scenario")!;
-    expect(scenarioCall.existingFields.name).toBe("Vespera");
-    expect(scenarioCall.existingFields.description).toBe("Generated description for {{user}}");
-    expect(scenarioCall.existingFields.personality).toBe("Generated personality for {{user}}");
+    const historyText = scenarioCall.history.map((t) => t.content).join("\n");
+    expect(historyText).toContain("Generated description for {{user}}");
+    expect(historyText).toContain("Generated personality for {{user}}");
+    expect(historyText).toContain("Vespera");
 
     // Verify brief payload passed through
     expect(invokeMock.mock.calls[0][1].body.brief).toMatchObject({

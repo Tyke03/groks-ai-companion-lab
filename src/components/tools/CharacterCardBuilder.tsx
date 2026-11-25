@@ -50,11 +50,13 @@ import {
 } from "@/lib/cardFieldMeta";
 import {
   buildFieldContextPayload,
+  createStageConversation,
   runStagedGeneration,
   applyFieldResult,
   seedStrength,
   type CompanionBrief,
   type FieldOutcome,
+  type StageConversation,
 } from "@/lib/cardGeneratePipeline";
 import { providerLabel, isByokProvider } from "@/lib/providerLabel";
 import { contentLevelLabels, contentLevelColors, type ContentLevel } from "@/data/chatbots";
@@ -321,6 +323,8 @@ export const CharacterCardBuilder = () => {
   const [runProviders, setRunProviders] = useState<string[]>([]);
   const [runUsedFallback, setRunUsedFallback] = useState(false);
   const abortRef = useRef<{ aborted: boolean } | null>(null);
+  // Multi-turn staged conversation: persists across staged runs until Clear All / new blank card
+  const stageConversationRef = useRef<StageConversation>(createStageConversation());
   const [showBrief, setShowBrief] = useState(false);
   const [brief, setBrief] = useState<CompanionBrief>(() => sanitizeBrief(activeSlot.brief, activeSlot.contentLevel));
   const [fieldPolicies, setFieldPolicies] = useState<FieldPolicies>(
@@ -808,6 +812,7 @@ export const CharacterCardBuilder = () => {
         fieldPolicies,
         runMode,
         protectExisting: !notes,
+        conversation: stageConversationRef.current,
         control,
         onFieldStart: (f) => setGeneratingField(String(f)),
         onFieldDone: (o: FieldOutcome) => {
@@ -1041,6 +1046,7 @@ export const CharacterCardBuilder = () => {
     setFieldProvider({});
     setRunProviders([]);
     setRunUsedFallback(false);
+    stageConversationRef.current = createStageConversation(); // fresh conversation, new primer prefix
     void deletePortrait(library.activeId);
     toast({ title: "Cleared", description: "Active card fields and portrait reset. Other saved cards are unchanged." });
   };

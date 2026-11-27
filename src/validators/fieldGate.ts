@@ -6,8 +6,12 @@ import { validateAgency } from "./agency";
 import { validateArrayShape } from "./arrayShape";
 import { validateBudget } from "./budget";
 import { validateJargon } from "./jargon";
+import { validateMacro } from "./macro";
 import { validateMarkdown } from "./markdown";
-import { validateStageRubric } from "./stageRubric";
+import { validateNgram } from "./ngram";
+import { validateOverlap } from "./overlap";
+import { validatePov } from "./pov";
+import { validateRefs } from "./refs";
 import type { Finding, GateResult } from "./types";
 import { gate } from "./types";
 
@@ -36,10 +40,11 @@ export function validateWrittenField(card: Card, field: FieldName, tokens: numbe
     findings.push(...validateBudget(field, tokens, budget).findings);
   }
   findings.push(...validateAgency(field, text).findings);
-  findings.push(...validateStageRubric(field, text).findings);
-  if (field === "description") {
-    findings.push(...validateJargon(field, text, true).findings);
-  }
+  findings.push(...validateMacro(card, field, text).findings);
+  findings.push(...validatePov(field, text).findings);
+  findings.push(...validateRefs(card, field, text).findings);
+  findings.push(...validateOverlap(card, field).findings);
+  findings.push(...validateNgram(card, field).findings);
   if (FIELD_REGISTRY[field].lint.includes("semver-ish") && text.trim() && !SEMVERISH.test(text.trim())) {
     findings.push({
       validator: "semver",
@@ -70,6 +75,18 @@ export function validateWrittenField(card: Card, field: FieldName, tokens: numbe
   if (field === "mes_example") {
     const problem = mesExampleOk(text);
     if (problem) findings.push({ validator: "mesExample", field, blocking: true, message: problem });
+  }
+  if (field === "post_history_instructions") {
+    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+    const bullets = lines.filter((line) => /^([-*•]|\d+[.)])\s+/.test(line)).length;
+    if (lines.length > 4 || bullets > 3) {
+      findings.push({
+        validator: "phi",
+        field,
+        blocking: true,
+        message: "post_history_instructions exceeds 4 lines or 3 bullets",
+      });
+    }
   }
   if (FIELD_REGISTRY[field].format === "array") {
     findings.push(...validateArrayShape(field, state.value).findings);

@@ -403,11 +403,11 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
       control: opts.control,
       onFieldStart: (field) => opts.onFieldStart?.(field as keyof CardData, field),
       onFieldDone: (field, status, provider) => {
-        if (status !== "filled") return;
+        if (status !== "filled" && status !== "blocked") return;
         const outcome: FieldOutcome = {
           field: field as keyof CardData,
           stageId: field,
-          status: "filled",
+          status: status === "filled" ? "filled" : "failed",
           provider,
         };
         outcomes.push(outcome);
@@ -415,13 +415,13 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
       },
     });
     for (const outcome of generated.outcomes) {
-      if (outcome.status === "filled") {
+      if (outcome.status === "filled" || outcome.status === "blocked") {
         working = applyFieldResult(working, outcome.field as keyof CardData, authoring.fields[outcome.field].value);
-        if (!outcomes.some((existing) => existing.field === outcome.field && existing.status === "filled")) {
+        if (!outcomes.some((existing) => existing.field === outcome.field)) {
           outcomes.push({
             field: outcome.field as keyof CardData,
             stageId: outcome.field,
-            status: "filled",
+            status: outcome.status === "filled" ? "filled" : "failed",
           });
         }
         continue;
@@ -429,7 +429,7 @@ export async function runStagedGeneration(opts: RunOptions): Promise<RunResult> 
       outcomes.push({
         field: outcome.field as keyof CardData,
         stageId: outcome.field,
-        status: outcome.status === "blocked" || outcome.status === "cost" ? "failed" : "skipped",
+        status: outcome.status === "cost" ? "failed" : "skipped",
       });
     }
     if (generated.aborted || opts.control?.aborted) {

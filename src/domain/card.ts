@@ -23,8 +23,8 @@ export const FIELD_NAMES = [
   "tags",
   "description",
   "personality",
-  "scenario",
   "first_mes",
+  "scenario",
   "alternate_greetings",
   "group_only_greetings",
   "mes_example",
@@ -66,7 +66,10 @@ export interface CardData {
 }
 
 export interface PlanRecord {
-  ownership: Record<string, string>;
+  ownership: Partial<Record<FieldName, string>>;
+  tells: string[];
+  beats: { inciting: string; opening: string };
+  voice_rules: string[];
   contradictions: { a: string; b: string; kind?: string; quoteA: string; quoteB: string; fix?: string }[];
   directives: string[];
 }

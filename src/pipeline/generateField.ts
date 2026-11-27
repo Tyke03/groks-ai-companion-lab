@@ -2,7 +2,7 @@ import { PIPELINE_CONFIG } from "../config/pipeline";
 import { buildContext } from "../context/assembler";
 import { countTokens, truncateToBudget } from "../context/budgets";
 import { parseItems, renderFieldBody } from "../context/format";
-import type { Card, FieldName, PlanRecord } from "../domain/card";
+import { isEmptyValue, type Card, type FieldName, type PlanRecord } from "../domain/card";
 import { FIELD_REGISTRY } from "../domain/fields";
 import { writeField } from "../domain/create";
 import { buildRequest, complete } from "../llm/client";
@@ -28,7 +28,10 @@ export interface WriteEnv {
   cardId: string;
   brief?: string;
   directives: string[];
-  ownership: Record<string, string>;
+  ownership: PlanRecord["ownership"];
+  tells: string[];
+  beats: PlanRecord["beats"];
+  voice_rules: string[];
   contradictions: PlanRecord["contradictions"];
   cost: CostGuard;
   escalations: EscalationBudget;
@@ -37,9 +40,31 @@ export interface WriteEnv {
   systemCacheHit: boolean;
 }
 
-function userTurn(card: Card, field: FieldName, note: string, ownership: Record<string, string>): string {
-  const extra = [STAGE_PROMPTS[field] ?? "", note].filter(Boolean).join("\n");
-  return buildContext(field, card, extra, ownership);
+function mustCover(field: FieldName, env: WriteEnv): string {
+  const facts = Object.entries(env.ownership).filter(([name, fact]) => name === field && fact?.trim());
+  if (facts.length) return facts.map(([, fact]) => fact).join("; ");
+  return FIELD_REGISTRY[field].contract.mustCover;
+}
+
+function stageInjection(field: FieldName, env: WriteEnv): string {
+  if (field === "personality" && env.tells.length) {
+    return `TELL INVENTORY (use all of these):\n${env.tells.join("\n")}`;
+  }
+  if (field === "first_mes" && (env.beats.inciting || env.beats.opening)) {
+    return `BEAT:\n${env.beats.inciting}\n${env.beats.opening}`;
+  }
+  if (field === "scenario" && env.beats.inciting) {
+    return `ALREADY WRITTEN — DO NOT RESTAGE:\n${env.beats.inciting}`;
+  }
+  if ((field === "system_prompt" || field === "post_history_instructions") && env.voice_rules.length) {
+    return `VOICE RULES (tells live in personality; do not restate them):\n${env.voice_rules.join("\n")}`;
+  }
+  return "";
+}
+
+function userTurn(card: Card, field: FieldName, note: string, env: WriteEnv): string {
+  const extra = [STAGE_PROMPTS[field] ?? "", stageInjection(field, env), note].filter(Boolean).join("\n");
+  return buildContext(field, card, extra, env.ownership, mustCover(field, env));
 }
 
 function withBrief(text: string, env: WriteEnv): string {
@@ -145,7 +170,7 @@ export async function generateField(card: Card, field: FieldName, env: WriteEnv)
   let lastFindings: Finding[] = [];
 
   const runOnce = async (): Promise<{ status: FieldWriteResult["status"]; provider?: string; findings: Finding[] }> => {
-    const user = withBrief(userTurn(card, field, note, env.ownership), env);
+    const user = withBrief(userTurn(card, field, note, env), env);
     const called = await callStage(env, route, field, field, user, attempt);
     attempt += 1;
     if (called === "aborted") return { status: "skipped", findings: [] };
@@ -169,19 +194,28 @@ export async function generateField(card: Card, field: FieldName, env: WriteEnv)
     return { status: gate.pass ? "filled" : "blocked", provider: called.provider, findings: gate.findings };
   };
 
+  const finish = (result: FieldWriteResult): FieldWriteResult => {
+    if (result.status === "skipped" || isEmptyValue(card.fields[field].value)) return result;
+    applyTruncation(card, field);
+    if (result.status === "cost") return result;
+    const gate = validateWrittenField(card, field, card.fields[field].tokens);
+    if (gate.pass) return { status: "filled", provider: result.provider, findings: [] };
+    return { status: "blocked", provider: result.provider, findings: gate.findings };
+  };
+
   let outcome = await runOnce();
-  if (outcome.status !== "blocked") return outcome;
+  if (outcome.status !== "blocked") return finish(outcome);
   lastFindings = outcome.findings;
 
   if (!repaired && PIPELINE_CONFIG.repairsPerField > 0) {
     repaired = true;
     const repair = await repairField(card, field, lastFindings[0], env);
-    if (repair === "cost") return { status: "cost", findings: lastFindings };
+    if (repair === "cost") return finish({ status: "cost", findings: lastFindings, provider: outcome.provider });
     if (repair === "aborted") return { status: "skipped", findings: [] };
     if (repair) {
       const tokens = card.fields[field].tokens;
       const gate = validateWrittenField(card, field, tokens);
-      if (gate.pass) return { status: "filled", provider: outcome.provider, findings: [] };
+      if (gate.pass) return finish({ status: "filled", provider: outcome.provider, findings: [] });
       lastFindings = gate.findings;
       gate.findings.forEach((f) => emitFail(field, f));
     }
@@ -191,7 +225,7 @@ export async function generateField(card: Card, field: FieldName, env: WriteEnv)
     regenerated = true;
     note = `tighten, target ${Math.round(PIPELINE_CONFIG.regenerateTarget * 100)}% of budget`;
     outcome = await runOnce();
-    if (outcome.status !== "blocked") return outcome;
+    if (outcome.status !== "blocked") return finish(outcome);
     lastFindings = outcome.findings;
   }
 
@@ -203,19 +237,12 @@ export async function generateField(card: Card, field: FieldName, env: WriteEnv)
       route = next;
       emit("escalation", { field, model: next.model });
       outcome = await runOnce();
-      if (outcome.status !== "blocked") return outcome;
+      if (outcome.status !== "blocked") return finish(outcome);
       lastFindings = outcome.findings;
     }
   }
 
-  if (lastFindings.some((finding) => finding.blocking && finding.validator === "budget")) {
-    applyTruncation(card, field);
-    const gate = validateWrittenField(card, field, card.fields[field].tokens);
-    if (gate.pass) return { status: "filled", provider: outcome.provider, findings: [] };
-    lastFindings = gate.findings;
-  }
-
-  return { status: "blocked", provider: outcome.provider, findings: lastFindings };
+  return finish({ status: "blocked", provider: outcome.provider, findings: lastFindings });
 }
 
 /** Repair sees the field body and the finding only. No card context. */

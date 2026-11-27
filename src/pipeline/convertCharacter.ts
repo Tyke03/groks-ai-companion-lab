@@ -1,5 +1,5 @@
 import { INJECTION_GUARD } from "../context/assembler";
-import type { Card, CardMeta, FieldName, PlanRecord } from "../domain/card";
+import type { Card, CardMeta, FieldName } from "../domain/card";
 import { fieldText, isEmptyValue } from "../domain/card";
 import { createEmptyCard, writeField } from "../domain/create";
 import { buildRequest, complete } from "../llm/client";
@@ -7,6 +7,7 @@ import { parseModelJson, type LlmClient } from "../llm/types";
 import { STAGE_PROMPTS } from "../prompts/load";
 import { routeFor } from "../router/stages";
 import { validateSchema } from "../validators/schema";
+import { asPlan } from "./generateCard";
 import { redistribute, type ExtractCandidate } from "./redistribute";
 
 export type SourceFormat = "v1" | "v2" | "wpp" | "raw";
@@ -32,20 +33,6 @@ function nameFromRaw(raw: string): string {
   } catch {
     return "";
   }
-}
-
-function asPlan(parsed: unknown): PlanRecord | null {
-  if (!validateSchema("plan", parsed).pass) return null;
-  const body = parsed as PlanRecord;
-  const ownership: Record<string, string> = {};
-  for (const [key, value] of Object.entries(body.ownership ?? {})) {
-    if (typeof value === "string" && value.trim()) ownership[key] = value.trim();
-  }
-  return {
-    ownership,
-    contradictions: Array.isArray(body.contradictions) ? body.contradictions : [],
-    directives: (body.directives ?? []).filter((item) => typeof item === "string" && item.trim()),
-  };
 }
 
 /** Sniff, extract, plan, then redistribute. Content fields land unlocked, included, and marked imported_raw. */

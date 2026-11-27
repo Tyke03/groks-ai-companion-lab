@@ -3,7 +3,7 @@ import { INJECTION_GUARD } from "../context/assembler";
 import { countTokens } from "../context/budgets";
 import { renderFieldBody } from "../context/format";
 import type { Card, FieldName, PlanRecord } from "../domain/card";
-import { isEmptyValue } from "../domain/card";
+import { FIELD_NAMES, isEmptyValue } from "../domain/card";
 import { writeField } from "../domain/create";
 import { LOCK_AFTER_STAGE, STAGE_ORDER } from "../domain/fields";
 import { buildRequest, complete } from "../llm/client";
@@ -26,9 +26,10 @@ export interface GenerateResult {
   aborted: boolean;
   costAborted: boolean;
   costUSD: number;
+  status: "ok" | "plan-failed";
 }
 
-const EMPTY_PLAN: PlanRecord = { ownership: {}, contradictions: [], directives: [] };
+const FIELD_SET = new Set<string>(FIELD_NAMES);
 
 function digest(card: Card): string[] {
   return STAGE_ORDER.map((name) => {
@@ -40,35 +41,46 @@ function digest(card: Card): string[] {
   }).filter(Boolean);
 }
 
-function asPlan(parsed: unknown): PlanRecord {
+export function asPlan(parsed: unknown): PlanRecord | null {
+  if (!validateSchema("plan", parsed).pass) return null;
   const body = parsed as {
     ownership?: Record<string, unknown>;
+    tells?: unknown[];
+    beats?: { inciting?: unknown; opening?: unknown };
+    voice_rules?: unknown[];
     contradictions?: QuotePair[];
     directives?: unknown[];
   };
-  const ownership: Record<string, string> = {};
+  const ownership: Partial<Record<FieldName, string>> = {};
   for (const [key, value] of Object.entries(body.ownership ?? {})) {
-    if (typeof value === "string" && value.trim()) ownership[key] = value.trim();
+    if (!FIELD_SET.has(key) || typeof value !== "string" || !value.trim()) continue;
+    ownership[key as FieldName] = value.trim();
   }
+  const tells = (body.tells ?? []).filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  const inciting = typeof body.beats?.inciting === "string" ? body.beats.inciting.trim() : "";
+  const opening = typeof body.beats?.opening === "string" ? body.beats.opening.trim() : "";
+  const voice_rules = (body.voice_rules ?? []).filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  if (tells.length < 3 || !inciting || !opening) return null;
   const contradictions = (body.contradictions ?? []).filter(
     (item) => item && typeof item.quoteA === "string" && typeof item.quoteB === "string" && typeof item.a === "string",
   );
   const directives = (body.directives ?? []).filter((d): d is string => typeof d === "string" && d.trim().length > 0);
-  return { ownership, contradictions, directives };
+  return { ownership, tells, beats: { inciting, opening }, voice_rules, contradictions, directives };
 }
 
-async function runPlan(card: Card, env: WriteEnv): Promise<PlanRecord> {
+async function requestPlan(card: Card, env: WriteEnv, attempt: number): Promise<PlanRecord | "cost" | "aborted" | null> {
+  if (env.control?.aborted) return "aborted";
+  if (env.cost.exhausted) return "cost";
   const user = [INJECTION_GUARD, STAGE_PROMPTS.plan, env.brief ? `<<BRIEF>>\n${env.brief}\n<<END_BRIEF>>` : "", ...digest(card)]
     .filter(Boolean)
     .join("\n\n");
-  if (env.cost.exhausted || env.control?.aborted) return EMPTY_PLAN;
   try {
     const req = buildRequest({
       route: routeFor("plan"),
       stage: "plan",
       user,
       cardId: env.cardId,
-      attempt: 1,
+      attempt,
       systemCacheHit: env.systemCacheHit,
     });
     emit("stage.start", { stage: "plan", field: "plan" });
@@ -76,12 +88,20 @@ async function runPlan(card: Card, env: WriteEnv): Promise<PlanRecord> {
     env.systemCacheHit = true;
     env.cost.add(res.costUSD);
     emit("stage.done", { stage: "plan", field: "plan", tokens: res.inputTokens + res.outputTokens, cost: Number(res.costUSD.toFixed(6)), ms: 0 });
-    const parsed = parseModelJson(res.content);
-    if (!validateSchema("plan", parsed).pass) return EMPTY_PLAN;
-    return asPlan(parsed);
+    return asPlan(parseModelJson(res.content));
   } catch {
-    return EMPTY_PLAN;
+    return null;
   }
+}
+
+async function runPlan(card: Card, env: WriteEnv): Promise<PlanRecord | "plan-failed" | "aborted" | "cost"> {
+  const first = await requestPlan(card, env, 1);
+  if (first === "aborted" || first === "cost") return first;
+  if (first) return first;
+  const second = await requestPlan(card, env, 2);
+  if (second === "aborted" || second === "cost") return second;
+  if (second) return second;
+  return "plan-failed";
 }
 
 async function runAudit(card: Card, env: WriteEnv): Promise<void> {
@@ -168,6 +188,9 @@ export async function generateCard(
     brief: opts.brief,
     directives: card.meta.plan?.directives ?? [],
     ownership: { ...(card.meta.plan?.ownership ?? {}) },
+    tells: [...(card.meta.plan?.tells ?? [])],
+    beats: card.meta.plan?.beats ?? { inciting: "", opening: "" },
+    voice_rules: [...(card.meta.plan?.voice_rules ?? [])],
     contradictions: [...(card.meta.plan?.contradictions ?? [])],
     cost: new CostGuard(),
     escalations: escalationBudget(),
@@ -178,11 +201,35 @@ export async function generateCard(
   let aborted = false;
   let costAborted = false;
   const handle = opts.creatorHandle || "companionhub";
+  const finish = (status: GenerateResult["status"]): GenerateResult => ({
+    card,
+    outcomes,
+    directives: env.directives,
+    aborted,
+    costAborted,
+    costUSD: env.cost.spent,
+    status,
+  });
 
   if ((opts.planMode ?? "always") === "always") {
     const plan = await runPlan(card, env);
+    if (plan === "plan-failed") {
+      aborted = true;
+      return finish("plan-failed");
+    }
+    if (plan === "aborted") {
+      aborted = true;
+      return finish("ok");
+    }
+    if (plan === "cost") {
+      costAborted = true;
+      return finish("ok");
+    }
     env.directives = plan.directives;
     env.ownership = plan.ownership;
+    env.tells = plan.tells;
+    env.beats = plan.beats;
+    env.voice_rules = plan.voice_rules;
     env.contradictions = plan.contradictions;
     card.meta.plan = plan;
     if (env.cost.exhausted) costAborted = true;
@@ -222,12 +269,5 @@ export async function generateCard(
     if (env.control?.aborted) aborted = true;
   }
 
-  return {
-    card,
-    outcomes,
-    directives: env.directives,
-    aborted,
-    costAborted,
-    costUSD: env.cost.spent,
-  };
+  return finish("ok");
 }

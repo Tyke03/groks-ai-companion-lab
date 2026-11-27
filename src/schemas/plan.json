@@ -1,11 +1,29 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["ownership", "contradictions", "directives"],
+  "required": ["ownership", "tells", "beats", "voice_rules", "contradictions", "directives"],
   "properties": {
     "ownership": {
       "type": "object",
       "additionalProperties": { "type": "string" }
+    },
+    "tells": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "type": "string" }
+    },
+    "beats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inciting", "opening"],
+      "properties": {
+        "inciting": { "type": "string" },
+        "opening": { "type": "string" }
+      }
+    },
+    "voice_rules": {
+      "type": "array",
+      "items": { "type": "string" }
     },
     "contradictions": {
       "type": "array",

@@ -6,6 +6,15 @@ import { emptyCardData } from "@/lib/cardTypes";
 
 const invokeMock = vi.fn();
 
+const VALID_PLAN = JSON.stringify({
+  ownership: { description: "the archive key stays on a brass chain" },
+  tells: ["a glance toward the door", "a pause before the answer", "one hand kept on the rail"],
+  beats: { inciting: "the lamp drops", opening: "she sets a brass key on the blotter" },
+  voice_rules: ["short sentences", "no comfort offered", "name the object in hand"],
+  contradictions: [],
+  directives: ["Keep the archive key in description only."],
+});
+
 vi.mock("@/integrations/supabase/client", () => ({
   isSupabaseConfigured: true,
   supabase: {
@@ -71,7 +80,7 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
       seenCalls.push({ fieldName: field, user });
       const prose: Record<string, string> = {
         nickname: "Vess",
-        description: "Vespera keeps the archive key on a brass chain.",
+        description: "A brass chain holds the archive key against a dark coat.",
         personality: "She is dry, patient, and unwilling to soothe anyone.",
         scenario: "The archive is locked at dusk and she is already inside.",
         first_mes: "The lamp is low.\n\nShe sets a brass key on the blotter.\n\n\"You are late. What did you bring?\"",
@@ -80,7 +89,7 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
         creator_notes: "Intended user: players who like slow noir.\nShe starts a chat already mid-argument.",
       };
       let result = prose[field] ?? `Draft ${field}.`;
-      if (field === "plan") result = JSON.stringify({ ownership: {}, contradictions: [], directives: ["Keep the archive key in description only."] });
+      if (field === "plan") result = VALID_PLAN;
       if (field === "audit") result = JSON.stringify({ findings: [] });
       if (field === "alternate_greetings" || field === "group_only_greetings") {
         result = JSON.stringify({
@@ -132,7 +141,7 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
 
     const scenarioCall = seenCalls.find((c) => c.fieldName === "scenario")!;
     const beforeContract = scenarioCall.user.split("<<FIELD_CONTRACT>>")[0] ?? "";
-    expect(beforeContract).toContain("Vespera keeps the archive key");
+    expect(beforeContract).toContain("A brass chain holds the archive key");
     expect(beforeContract).toContain("Vespera");
     expect(beforeContract).not.toMatch(/^### scenario$/m);
     expect(scenarioCall.user).toContain("Clocktower archive");
@@ -152,10 +161,13 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
 
   it("shows fallback warning when a non-preferred provider answers (D8)", async () => {
     invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => {
-      const field = String(opts.body.fieldName || "");
+      const field = String(opts.body.fieldName || opts.body.stage || "");
+      let result: unknown = field === "alternate_greetings" ? ["One", "Two", "Three"] : `Fallback ${field}`;
+      if (field === "plan") result = VALID_PLAN;
+      if (field === "audit") result = JSON.stringify({ findings: [] });
       return {
         data: {
-          result: field === "alternate_greetings" ? ["One", "Two", "Three"] : `Fallback ${field}`,
+          result,
           fieldName: field,
           provider: "openrouter",
         },
@@ -265,14 +277,16 @@ describe("CharacterCardBuilder canonical AI + R7 export sanitization", () => {
   });
 
   it("opens Whole-Card Launch Popup when content exists and honors Empty-Only vs Rewrite-Unlocked", async () => {
-    invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => ({
-      data: {
-        result: opts.body.fieldName === "alternate_greetings" ? ["A", "B", "C"] : `Gen ${String(opts.body.fieldName)}`,
-        fieldName: opts.body.fieldName,
-        provider: "venice",
-      },
-      error: null,
-    }));
+    invokeMock.mockImplementation(async (_fn: string, opts: { body: Record<string, unknown> }) => {
+      const field = String(opts.body.fieldName || opts.body.stage || "");
+      let result: unknown = field === "alternate_greetings" ? ["A", "B", "C"] : `Gen ${field}`;
+      if (field === "plan") result = VALID_PLAN;
+      if (field === "audit") result = JSON.stringify({ findings: [] });
+      return {
+        data: { result, fieldName: field, provider: "venice" },
+        error: null,
+      };
+    });
 
     render(<CharacterCardBuilder />);
     fireEvent.change(screen.getByLabelText(/^Description/i), { target: { value: "Existing core bio" } });

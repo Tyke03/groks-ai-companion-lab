@@ -1,7 +1,8 @@
 TARGET: {{field}}
-OWNS: {{owns}}
-MUST NOT CONTAIN: {{mustNot}}
-OWNED ELSEWHERE: {{elsewhere}}
+MUST COVER: {{mustCover}}
+MUST NOT: {{mustNot}}
+LENGTH: {{length}}
+POV: {{pov}}
 BUDGET: {{budget}} tokens hard.
 FORMAT: {{format}}
 Write fresh. Do not paraphrase any prior draft.

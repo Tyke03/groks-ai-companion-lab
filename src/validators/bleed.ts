@@ -35,7 +35,7 @@ export function dice(a: string, b: string): number {
   return (2 * inter) / (sa + sb || 1);
 }
 
-function sentences(text: string): string[] {
+export function splitSentences(text: string): string[] {
   return text
     .split(/(?<=[.!?])\s+|\n+/)
     .map((s) => s.trim())
@@ -46,7 +46,7 @@ function sentences(text: string): string[] {
 export function validateBleed(card: Card): GateResult {
   const bags = BLEED_FIELDS.map((name) => ({
     name,
-    sentences: sentences(fieldText(card.fields[name].value))
+    sentences: splitSentences(fieldText(card.fields[name].value))
       .map(normalizeSentence)
       .filter((s) => s.length >= 20),
   }));

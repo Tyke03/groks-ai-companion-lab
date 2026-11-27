@@ -3,7 +3,7 @@ import { GREETING_FIELDS } from "../domain/fields";
 import type { GateResult } from "./types";
 import { gate } from "./types";
 
-const PERSONALITY = /\b(if|when)\b|\{\{user\}\}/i;
+const PERSONALITY = /\{\{user\}\}|\byou\b|\byour\b/i;
 const IMPERATIVE = /\byou\s+(must|should|need to|have to)\b|\b(do not|don't)\b/i;
 
 const IMPERATIVE_EXEMPT = new Set<FieldName>([

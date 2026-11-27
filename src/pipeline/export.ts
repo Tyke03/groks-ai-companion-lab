@@ -59,8 +59,10 @@ export function exportCard(
       gatesPassed: true,
     },
   };
-  if (!String(data.name || "").trim()) {
-    reasons.push({ field: "name", validator: "schema", message: "name is required" });
+  for (const name of ["name", "description", "personality", "scenario", "first_mes", "mes_example"] as const) {
+    if (isEmptyValue(card.fields[name].value)) {
+      reasons.push({ field: name, validator: "required", message: `${name} is empty` });
+    }
   }
   const envelope = { spec: SPEC, spec_version: SPEC_VERSION, data };
   const schemaGate = validateSchema("card", envelope);
